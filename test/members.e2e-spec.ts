@@ -14,6 +14,8 @@ interface ProgressMember {
   userId: string;
   name: string;
   avatar: string | null;
+  portfolioUrl: string | null;
+  hasCv: boolean;
   isCurrentUser: boolean;
   lastUpdatedAt: string | null;
   counts: Record<string, number>;
@@ -301,6 +303,8 @@ describe('Members progress (e2e)', () => {
       userId: ids.get('current'),
       name: 'Nora Current',
       avatar: null,
+      portfolioUrl: null,
+      hasCv: false,
       isCurrentUser: true,
       lastUpdatedAt: expect.any(String),
       counts: { applied: 2, interview: 1, decision: 2, closed: 2 },
@@ -341,10 +345,12 @@ describe('Members progress (e2e)', () => {
       expect(Object.keys(member).sort()).toEqual([
         'avatar',
         'counts',
+        'hasCv',
         'isCurrentUser',
         'lastUpdatedAt',
         'memberId',
         'name',
+        'portfolioUrl',
         'userId',
       ]);
       expect(Object.keys(member.counts).sort()).toEqual([

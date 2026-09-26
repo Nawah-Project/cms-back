@@ -7,6 +7,7 @@ import {
   IsString,
   Max,
   Min,
+  MaxLength,
 } from 'class-validator';
 import { ApplicationStage } from '../enums/application-stage.enum';
 import { ApplicationOutcome } from '../enums/application-outcome.enum';
@@ -16,6 +17,7 @@ export class ApplicationQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(100_000)
   page?: number = 1;
 
   @IsOptional()
@@ -39,5 +41,6 @@ export class ApplicationQueryDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(200)
   search?: string;
 }

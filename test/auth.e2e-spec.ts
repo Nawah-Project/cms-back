@@ -303,7 +303,12 @@ describe('Authentication and application ownership (e2e)', () => {
       )
       .expect(302);
 
-    expect(callback.headers.location).toBe('http://localhost:5173/');
+    const frontendOrigin = (
+      process.env.FRONTEND_ORIGIN || 'http://localhost:5173'
+    )
+      .split(',')[0]
+      .trim();
+    expect(callback.headers.location).toBe(`${frontendOrigin}/`);
     expect(
       (callback.headers['set-cookie'] as unknown as string[]).some(
         (cookie) =>

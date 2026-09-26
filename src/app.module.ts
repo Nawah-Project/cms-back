@@ -9,17 +9,20 @@ import { APP_FILTER } from '@nestjs/core';
 import { PrismaExceptionFilter } from './prisma/prisma-exception.filter';
 import { AdminModule } from './admin/admin.module';
 import { ProfileModule } from './profile/profile.module';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { HealthController } from './health.controller';
 
 @Module({
   imports: [
     PrismaModule,
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
     AuthModule,
     ApplicationsModule,
     MembersModule,
     AdminModule,
     ProfileModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, HealthController],
   providers: [
     AppService,
     { provide: APP_FILTER, useClass: PrismaExceptionFilter },

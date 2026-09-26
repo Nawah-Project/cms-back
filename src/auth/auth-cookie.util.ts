@@ -7,31 +7,33 @@ import {
 } from './auth.constants';
 import type { TokenPair } from './auth.service';
 
-export function setAuthCookies(response: Response, tokens: TokenPair): void {
-  const secure = process.env.NODE_ENV === 'production';
-  response.cookie(ACCESS_COOKIE, tokens.accessToken, {
+function cookieOptions() {
+  const sameSite = (process.env.AUTH_COOKIE_SAME_SITE || 'lax').toLowerCase() as
+    | 'strict'
+    | 'lax'
+    | 'none';
+  return {
     httpOnly: true,
-    secure,
-    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production' || process.env.COOKIE_SECURE === 'true',
+    sameSite,
     path: '/',
+  } as const;
+}
+
+export function setAuthCookies(response: Response, tokens: TokenPair): void {
+  const options = cookieOptions();
+  response.cookie(ACCESS_COOKIE, tokens.accessToken, {
+    ...options,
     maxAge: ACCESS_TTL_SECONDS * 1000,
   });
   response.cookie(REFRESH_COOKIE, tokens.refreshToken, {
-    httpOnly: true,
-    secure,
-    sameSite: 'lax',
-    path: '/',
+    ...options,
     maxAge: REFRESH_TTL_SECONDS * 1000,
   });
 }
 
 export function clearAuthCookies(response: Response): void {
-  const options = {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax' as const,
-    path: '/',
-  };
+  const options = cookieOptions();
   response.clearCookie(ACCESS_COOKIE, options);
   response.clearCookie(REFRESH_COOKIE, options);
 }

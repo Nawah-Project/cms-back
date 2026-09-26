@@ -6,6 +6,7 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -46,21 +47,27 @@ export class ApplicationsController {
   }
 
   @Get(':id')
-  findOne(@CurrentUser('id') userId: string, @Param('id') id: string) {
+  findOne(
+    @CurrentUser('id') userId: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
     return this.applicationsService.findOne(userId, id);
   }
 
   @Patch(':id')
   update(
     @CurrentUser('id') userId: string,
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body() updateDto: UpdateApplicationDto,
   ) {
     return this.applicationsService.update(userId, id, updateDto);
   }
 
   @Delete(':id')
-  remove(@CurrentUser('id') userId: string, @Param('id') id: string) {
+  remove(
+    @CurrentUser('id') userId: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
     return this.applicationsService.remove(userId, id);
   }
 }

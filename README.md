@@ -4,13 +4,27 @@ NestJS 11 API using Prisma ORM 6 and PostgreSQL. The SQLite/TypeORM runtime has 
 
 ## Local PostgreSQL
 
-1. Copy `.env.example` to `.env` and replace the local database placeholders. Do not commit `.env` or production credentials.
-2. Start PostgreSQL: `docker compose up -d`.
+1. Copy `.env.example` to `.env`, use `NODE_ENV=development`, and set `DATABASE_URL` to `localhost` for the API running on the host. Keep `.env` out of Git.
+2. Start PostgreSQL only: `docker compose -f docker-compose.yml up -d`.
 3. Apply schema migrations: `npm run prisma:migrate:deploy`.
 4. Generate Prisma Client: `npm run prisma:generate`.
 5. Run the API: `npm run start:dev`.
 
-The Compose service persists data in the `cms-postgres-data` Docker volume. For schema development, use `npm run prisma:migrate:dev -- --name describe_change` and commit the generated `prisma/migrations` files. For production, back up the database and run `npm run prisma:migrate:deploy` as a release step before starting the new API version. Do not use `prisma db push` in production.
+The local Compose service persists data in the `cms-postgres-data` Docker volume and binds PostgreSQL to loopback only. For schema development, use `npm run prisma:migrate:dev -- --name describe_change` and commit the generated `prisma/migrations` files. Never use `prisma db push` or `prisma migrate reset` in production.
+
+## Production deployment
+
+The production stack is in `compose.yml`; it builds the API and frontend, starts PostgreSQL with persistent database storage, deploys Prisma migrations before starting the API, and mounts private CV storage. PostgreSQL and app ports bind to `127.0.0.1` only. Put a TLS reverse proxy in front of the frontend and API; set its public frontend origin and API URL in `.env`.
+
+1. Copy `.env.example` to `.env` and replace every placeholder. Generate different secrets with `openssl rand -hex 32`; use an URL-safe hex password for PostgreSQL and use that exact password in both `POSTGRES_PASSWORD` and the two database URLs.
+2. Set `FRONTEND_ORIGIN` to the public HTTPS frontend origin and `VITE_API_URL` to the public HTTPS API URL. Set `TRUST_PROXY` to the actual proxy hop count (the default `1` assumes one trusted local proxy).
+3. Back up the production database before the first deployment or any schema change.
+4. Build and start the stack: `docker compose -f compose.yml up --build -d`.
+5. Check readiness with `curl http://127.0.0.1:3000/health` and inspect startup output with `docker compose -f compose.yml logs api`.
+
+The API rejects production startup if database configuration, HTTPS CORS origins, persistent CV storage, or distinct 32-byte JWT secrets are missing/invalid. `prisma migrate deploy` runs at API startup; no seeding or demo data is run. Back up the named `cms-postgres-data` and `cv-storage` volumes separately. Rate limits use in-process memory, and CV files use a local persistent volume; this deployment is intended for a single API instance on one host. Multiple API replicas need shared CV storage and a shared rate-limit store.
+
+The container images could not be built in this environment because the Docker CLI cannot access `/var/run/docker.sock`; `docker compose config` validation is available without daemon access.
 
 ## Import the existing SQLite data
 
@@ -33,7 +47,7 @@ The importer refuses non-empty PostgreSQL tables, preserves UUIDs where valid, r
 Tests use PostgreSQL, not SQLite. Set `TEST_DATABASE_URL` in `.env` to a dedicated empty database named `cms_test`; the test setup refuses to run without it and switches the app's `DATABASE_URL` to that database. Create it once:
 
 ```bash
-docker compose exec postgres sh -c 'createdb -U "$POSTGRES_USER" cms_test'
+docker compose -f docker-compose.yml exec postgres sh -c 'createdb -U "$POSTGRES_USER" cms_test'
 ```
 
 Apply migrations to the test database and run the suite:
@@ -44,7 +58,7 @@ npm test -- --runInBand
 npm run test:e2e
 ```
 
-The e2e suite truncates application tables in `cms_test` between suites. Never point `TEST_DATABASE_URL` at a development or production database.
+The e2e suite truncates application tables in `cms_test` between suites. Never point `TEST_DATABASE_URL` at a development or production database. The example `DATABASE_URL` is for running the API on the host; `DATABASE_URL_DOCKER` uses the Compose `postgres` service name.
 
 ## Data model and behavior
 

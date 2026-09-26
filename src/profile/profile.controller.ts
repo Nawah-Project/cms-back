@@ -14,6 +14,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { createReadStream } from 'node:fs';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -42,6 +43,8 @@ export class ProfileController {
   }
 
   @Post('profile/cv')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @UseInterceptors(
     FileInterceptor('file', {
       limits: { fileSize: CV_MAX_FILE_SIZE_BYTES, files: 1 },

@@ -1,6 +1,7 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -17,26 +18,11 @@ import {
 import {
   ADMIN_MONITORING_DEFAULT_LIMIT,
   ADMIN_MONITORING_MAX_LIMIT,
+  INACTIVITY_CRITICAL_DAYS,
+  INACTIVITY_WARNING_DAYS,
 } from './admin.constants';
 import { ActivityState, getActivityState } from './activity-status.util';
 import { MonitoringQueryDto } from './dto/monitoring-query.dto';
-
-interface UserMonitoringRow {
-  id: string;
-  name: string;
-  role: UserRole;
-  group: { id: string; name: string } | null;
-  lastActivityAt: Date | null;
-  inactivityDays: number | null;
-  activityStatus: ActivityState['activityStatus'];
-  applicationsCount: number;
-  currentStageCounts: {
-    applied: number;
-    interview: number;
-    decision: number;
-    closed: number;
-  };
-}
 
 type ActivityItem = {
   id: string;
@@ -53,6 +39,8 @@ type ActivityItem = {
 
 @Injectable()
 export class AdminService {
+  private readonly logger = new Logger(AdminService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly groupAssignment: GroupAssignmentService,
@@ -69,181 +57,163 @@ export class AdminService {
     );
   }
 
-  private async getUserRows(): Promise<UserMonitoringRow[]> {
-    const evaluatedAt = new Date();
-    const [users, appStats, stageCounts, transitionStats] = await Promise.all([
-      this.prisma.user.findMany({
-        select: {
-          id: true,
-          name: true,
-          role: true,
-          membership: {
-            select: { group: { select: { id: true, name: true } } },
-          },
-        },
-      }),
-      this.prisma.application.groupBy({
-        by: ['userId'],
-        _count: { _all: true },
-        _max: { createdAt: true, updatedAt: true },
-      }),
-      this.prisma.application.groupBy({
-        by: ['userId', 'stage'],
-        _count: { _all: true },
-      }),
-      this.prisma.applicationStageTransition.groupBy({
-        by: ['userId'],
-        _max: { changedAt: true },
-      }),
-    ]);
-    const appByUser = new Map(appStats.map((row) => [row.userId, row]));
-    const transitionsByUser = new Map(
-      transitionStats.map((row) => [row.userId, row._max.changedAt]),
-    );
-    const stagesByUser = new Map<
-      string,
-      UserMonitoringRow['currentStageCounts']
-    >();
-    for (const row of stageCounts) {
-      const counts = stagesByUser.get(row.userId) ?? {
-        applied: 0,
-        interview: 0,
-        decision: 0,
-        closed: 0,
-      };
-      counts[row.stage.toLowerCase() as keyof typeof counts] = row._count._all;
-      stagesByUser.set(row.userId, counts);
-    }
-
-    return users.map((user) => {
-      const app = appByUser.get(user.id);
-      const dates = [
-        app?._max.createdAt ?? null,
-        app?._max.updatedAt ?? null,
-        transitionsByUser.get(user.id) ?? null,
-      ].filter((date): date is Date => date !== null);
-      const lastActivityAt = dates.length
-        ? new Date(Math.max(...dates.map((date) => date.getTime())))
-        : null;
-      const state = getActivityState(lastActivityAt, evaluatedAt);
-      return {
-        id: user.id,
-        name: user.name,
-        role: user.role,
-        group: user.membership?.group ?? null,
-        lastActivityAt,
-        ...state,
-        applicationsCount: app?._count._all ?? 0,
-        currentStageCounts: stagesByUser.get(user.id) ?? {
-          applied: 0,
-          interview: 0,
-          decision: 0,
-          closed: 0,
-        },
-      };
-    });
+  private userActivityCte(): Prisma.Sql {
+    return Prisma.sql`WITH application_activity AS (
+      SELECT "userId", MAX(GREATEST("createdAt", "updatedAt")) AS last_at
+      FROM applications GROUP BY "userId"
+    ), transition_activity AS (
+      SELECT "userId", MAX("changedAt") AS last_at
+      FROM application_stage_transitions GROUP BY "userId"
+    ), latest_activity AS (
+      SELECT u.id, u.name, u.role, m."groupId", g.name AS "groupName",
+        COALESCE(GREATEST(a.last_at, t.last_at), a.last_at, t.last_at) AS last_at
+      FROM users u
+      LEFT JOIN memberships m ON m."userId" = u.id
+      LEFT JOIN member_groups g ON g.id = m."groupId"
+      LEFT JOIN application_activity a ON a."userId" = u.id
+      LEFT JOIN transition_activity t ON t."userId" = u.id
+    ), activity_age AS (
+      SELECT *,
+        CASE WHEN last_at IS NULL THEN NULL
+          ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - last_at)) / 86400)::int)
+        END AS inactivity_days
+      FROM latest_activity
+    ), classified AS (
+      SELECT *, CASE
+        WHEN inactivity_days IS NULL THEN 'NEVER_ACTIVE'
+        WHEN inactivity_days >= ${INACTIVITY_CRITICAL_DAYS} THEN 'CRITICAL'
+        WHEN inactivity_days >= ${INACTIVITY_WARNING_DAYS} THEN 'WARNING'
+        ELSE 'ACTIVE'
+      END AS activity_status
+      FROM activity_age
+    )`;
   }
 
   async getOverview() {
-    const [rows, groupsCount, applicationsCount, membershipsCount] =
-      await Promise.all([
-        this.getUserRows(),
-        this.prisma.group.count(),
-        this.prisma.application.count(),
-        this.prisma.membership.count(),
-      ]);
+    const [overview] = await this.prisma.$queryRaw<
+      Array<{
+        usersCount: number;
+        groupsCount: number;
+        membershipsCount: number;
+        unassignedUsersCount: number;
+        activeUsersCount: number;
+        warningUsersCount: number;
+        criticalUsersCount: number;
+        neverActiveUsersCount: number;
+        applicationsCount: number;
+      }>
+    >(Prisma.sql`${this.userActivityCte()}
+      SELECT COUNT(*)::int AS "usersCount",
+        (SELECT COUNT(*)::int FROM member_groups) AS "groupsCount",
+        (SELECT COUNT(*)::int FROM memberships) AS "membershipsCount",
+        COUNT(*) FILTER (WHERE "groupId" IS NULL)::int AS "unassignedUsersCount",
+        COUNT(*) FILTER (WHERE activity_status = 'ACTIVE')::int AS "activeUsersCount",
+        COUNT(*) FILTER (WHERE activity_status = 'WARNING')::int AS "warningUsersCount",
+        COUNT(*) FILTER (WHERE activity_status = 'CRITICAL')::int AS "criticalUsersCount",
+        COUNT(*) FILTER (WHERE activity_status = 'NEVER_ACTIVE')::int AS "neverActiveUsersCount",
+        (SELECT COUNT(*)::int FROM applications) AS "applicationsCount"
+      FROM classified`);
     return {
-      usersCount: rows.length,
-      groupsCount,
-      membershipsCount,
-      unassignedUsersCount: rows.filter((row) => !row.group).length,
-      activeUsersCount: rows.filter((row) => row.activityStatus === 'ACTIVE')
-        .length,
-      warningUsersCount: rows.filter((row) => row.activityStatus === 'WARNING')
-        .length,
-      criticalUsersCount: rows.filter(
-        (row) => row.activityStatus === 'CRITICAL',
-      ).length,
-      neverActiveUsersCount: rows.filter(
-        (row) => row.activityStatus === 'NEVER_ACTIVE',
-      ).length,
-      applicationsCount,
+      ...overview,
     };
   }
 
   async getUsers(query: MonitoringQueryDto) {
     const page = Math.max(1, Math.floor(query.page || 1));
     const limit = this.boundedLimit(query.limit);
-    const allRows = await this.getUserRows();
-    const filtered = query.activityStatus
-      ? allRows.filter((row) => row.activityStatus === query.activityStatus)
-      : allRows;
-    filtered.sort((a, b) => {
-      if (a.lastActivityAt && b.lastActivityAt)
-        return (
-          b.lastActivityAt.getTime() - a.lastActivityAt.getTime() ||
-          a.id.localeCompare(b.id)
-        );
-      if (a.lastActivityAt) return -1;
-      if (b.lastActivityAt) return 1;
-      return a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
-    });
+    const statusFilter = query.activityStatus
+      ? Prisma.sql`WHERE c.activity_status = ${query.activityStatus}`
+      : Prisma.empty;
+    const offset = (page - 1) * limit;
+    const [rows, totals] = await Promise.all([
+      this.prisma.$queryRaw<Array<{
+        id: string;
+        name: string;
+        role: UserRole;
+        groupId: string | null;
+        groupName: string | null;
+        lastActivityAt: Date | null;
+        inactivityDays: number | null;
+        activityStatus: ActivityState['activityStatus'];
+        applicationsCount: number;
+        applied: number;
+        interview: number;
+        decision: number;
+        closed: number;
+      }>>(Prisma.sql`${this.userActivityCte()}, application_counts AS (
+        SELECT "userId", COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE stage = 'APPLIED')::int AS applied,
+          COUNT(*) FILTER (WHERE stage = 'INTERVIEW')::int AS interview,
+          COUNT(*) FILTER (WHERE stage = 'DECISION')::int AS decision,
+          COUNT(*) FILTER (WHERE stage = 'CLOSED')::int AS closed
+        FROM applications GROUP BY "userId"
+      )
+      SELECT c.id, c.name, c.role, c."groupId", c."groupName",
+        c.last_at AS "lastActivityAt", c.inactivity_days AS "inactivityDays",
+        c.activity_status AS "activityStatus", COALESCE(a.total, 0)::int AS "applicationsCount",
+        COALESCE(a.applied, 0)::int AS applied, COALESCE(a.interview, 0)::int AS interview,
+        COALESCE(a.decision, 0)::int AS decision, COALESCE(a.closed, 0)::int AS closed
+      FROM classified c LEFT JOIN application_counts a ON a."userId" = c.id
+      ${statusFilter}
+      ORDER BY c.last_at DESC NULLS LAST, c.name ASC, c.id ASC
+      OFFSET ${offset} LIMIT ${limit}`),
+      this.prisma.$queryRaw<Array<{ total: number }>>(Prisma.sql`${this.userActivityCte()}
+        SELECT COUNT(*)::int AS total FROM classified c ${statusFilter}`),
+    ]);
+    const total = totals[0]?.total ?? 0;
     return {
-      items: filtered.slice((page - 1) * limit, page * limit).map((row) => ({
-        ...row,
+      items: rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        role: row.role,
+        group: row.groupId ? { id: row.groupId, name: row.groupName! } : null,
         lastActivityAt: row.lastActivityAt?.toISOString() ?? null,
+        inactivityDays: row.inactivityDays,
+        activityStatus: row.activityStatus,
+        applicationsCount: row.applicationsCount,
+        currentStageCounts: {
+          applied: row.applied,
+          interview: row.interview,
+          decision: row.decision,
+          closed: row.closed,
+        },
         avatar: null,
       })),
-      total: filtered.length,
+      total,
       page,
       limit,
-      totalPages: Math.ceil(filtered.length / limit),
+      totalPages: Math.ceil(total / limit),
     };
   }
 
   async getGroups() {
-    const rows = await this.getUserRows();
-    const groups = await this.prisma.group.findMany({
-      select: { id: true, name: true, createdAt: true },
-      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-    });
-    const usersByGroup = new Map<string, UserMonitoringRow[]>();
-    for (const row of rows) {
-      if (!row.group) continue;
-      const members = usersByGroup.get(row.group.id) ?? [];
-      members.push(row);
-      usersByGroup.set(row.group.id, members);
-    }
+    const items = await this.prisma.$queryRaw<Array<{
+      id: string;
+      name: string;
+      memberCount: number;
+      lastActivityAt: Date | null;
+      activeMembers: number;
+      warningMembers: number;
+      criticalMembers: number;
+      neverActiveMembers: number;
+    }>>(Prisma.sql`${this.userActivityCte()}
+      SELECT g.id, g.name, COUNT(c.id)::int AS "memberCount",
+        MAX(c.last_at) AS "lastActivityAt",
+        COUNT(c.id) FILTER (WHERE c.activity_status = 'ACTIVE')::int AS "activeMembers",
+        COUNT(c.id) FILTER (WHERE c.activity_status = 'WARNING')::int AS "warningMembers",
+        COUNT(c.id) FILTER (WHERE c.activity_status = 'CRITICAL')::int AS "criticalMembers",
+        COUNT(c.id) FILTER (WHERE c.activity_status = 'NEVER_ACTIVE')::int AS "neverActiveMembers"
+      FROM member_groups g
+      LEFT JOIN classified c ON c."groupId" = g.id
+      GROUP BY g.id, g.name, g."createdAt"
+      ORDER BY g."createdAt" ASC, g.id ASC`);
     return {
-      items: groups.map((group) => {
-        const members = usersByGroup.get(group.id) ?? [];
-        const dates = members
-          .map((member) => member.lastActivityAt)
-          .filter((date): date is Date => date !== null);
-        const lastActivityAt = dates.length
-          ? new Date(Math.max(...dates.map((date) => date.getTime())))
-          : null;
-        return {
-          id: group.id,
-          name: group.name,
-          memberCount: members.length,
-          capacity: MAX_GROUP_SIZE,
-          availableSlots: Math.max(0, MAX_GROUP_SIZE - members.length),
-          lastActivityAt: lastActivityAt?.toISOString() ?? null,
-          activeMembers: members.filter(
-            (member) => member.activityStatus === 'ACTIVE',
-          ).length,
-          warningMembers: members.filter(
-            (member) => member.activityStatus === 'WARNING',
-          ).length,
-          criticalMembers: members.filter(
-            (member) => member.activityStatus === 'CRITICAL',
-          ).length,
-          neverActiveMembers: members.filter(
-            (member) => member.activityStatus === 'NEVER_ACTIVE',
-          ).length,
-        };
-      }),
+      items: items.map((group) => ({
+        ...group,
+        capacity: MAX_GROUP_SIZE,
+        availableSlots: Math.max(0, MAX_GROUP_SIZE - group.memberCount),
+        lastActivityAt: group.lastActivityAt?.toISOString() ?? null,
+      })),
     };
   }
 
@@ -509,7 +479,7 @@ export class AdminService {
   }
 
   async removeMember(groupId: string, userId: string) {
-    return this.groupAssignment.withAssignmentLock(async (transaction) => {
+    const result = await this.groupAssignment.withAssignmentLock(async (transaction) => {
       const membership = await transaction.membership.findFirst({
         where: { groupId, userId },
         select: { id: true },
@@ -518,10 +488,12 @@ export class AdminService {
       await transaction.membership.delete({ where: { id: membership.id } });
       return { success: true, groupId, userId, membershipRemoved: true };
     });
+    this.logger.log(`Removed user ${userId} from group ${groupId}`);
+    return result;
   }
 
   async assignUserToGroup(userId: string, targetGroupId?: string) {
-    return this.groupAssignment.withAssignmentLock(async (transaction) => {
+    const result = await this.groupAssignment.withAssignmentLock(async (transaction) => {
       const user = await transaction.user.findUnique({
         where: { id: userId },
         select: { id: true },
@@ -565,5 +537,7 @@ export class AdminService {
       });
       return { userId, group };
     });
+    this.logger.log(`Assigned user ${userId} to group ${result.group.id}`);
+    return result;
   }
 }

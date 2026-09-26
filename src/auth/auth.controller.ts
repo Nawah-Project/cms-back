@@ -9,6 +9,7 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { clearAuthCookies, setAuthCookies } from './auth-cookie.util';
@@ -33,6 +34,8 @@ export class AuthController {
   ) {}
 
   @Get('google')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   google(@Res() response: Response) {
     try {
       const request = this.socialAuth.createAuthorizationRequest('google');
@@ -70,6 +73,8 @@ export class AuthController {
   }
 
   @Post('register')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 50, ttl: 60_000 } })
   @HttpCode(HttpStatus.CREATED)
   async register(
     @Body() dto: RegisterDto,
@@ -81,6 +86,8 @@ export class AuthController {
   }
 
   @Post('login')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   async login(
     @Body() dto: LoginDto,
@@ -92,6 +99,8 @@ export class AuthController {
   }
 
   @Post('logout')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(
     @Req() request: Request & { cookies?: Record<string, string> },
@@ -103,6 +112,8 @@ export class AuthController {
   }
 
   @Post('refresh')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   async refresh(
     @Req() request: Request & { cookies?: Record<string, string> },

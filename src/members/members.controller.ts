@@ -1,4 +1,11 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { MembersService } from './members.service';
@@ -33,7 +40,7 @@ export class MembersController {
   @Get('progress/:memberId')
   getMemberDetail(
     @CurrentUser('id') userId: string,
-    @Param('memberId') memberId: string,
+    @Param('memberId', new ParseUUIDPipe()) memberId: string,
   ) {
     return this.members.getMemberDetail(userId, memberId);
   }

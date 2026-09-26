@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   Post,
+  ParseUUIDPipe,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -24,14 +25,17 @@ export class AdminController {
 
   @Delete('groups/:groupId/members/:userId')
   removeMember(
-    @Param('groupId') groupId: string,
-    @Param('userId') userId: string,
+    @Param('groupId', new ParseUUIDPipe()) groupId: string,
+    @Param('userId', new ParseUUIDPipe()) userId: string,
   ) {
     return this.admin.removeMember(groupId, userId);
   }
 
   @Post('users/:userId/group-assignment')
-  assignUser(@Param('userId') userId: string, @Body() dto?: AssignUserDto) {
+  assignUser(
+    @Param('userId', new ParseUUIDPipe()) userId: string,
+    @Body() dto?: AssignUserDto,
+  ) {
     return this.admin.assignUserToGroup(userId, dto?.groupId);
   }
 
@@ -56,7 +60,7 @@ export class AdminController {
   }
 
   @Get('monitoring/users/:userId')
-  getUserDetail(@Param('userId') userId: string) {
+  getUserDetail(@Param('userId', new ParseUUIDPipe()) userId: string) {
     return this.admin.getUserDetail(userId);
   }
 }

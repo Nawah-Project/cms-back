@@ -11,6 +11,7 @@ export class MonitoringQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(100_000)
   page = 1;
 
   @IsOptional()

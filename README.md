@@ -1,0 +1,76 @@
+# CMS API
+
+NestJS 11 API using Prisma ORM 6 and PostgreSQL. The SQLite/TypeORM runtime has been removed. Password and refresh-token hashes stay private; JWT access and refresh tokens are sent only in HttpOnly cookies.
+
+## Local PostgreSQL
+
+1. Copy `.env.example` to `.env` and replace the local database placeholders. Do not commit `.env` or production credentials.
+2. Start PostgreSQL: `docker compose up -d`.
+3. Apply schema migrations: `npm run prisma:migrate:deploy`.
+4. Generate Prisma Client: `npm run prisma:generate`.
+5. Run the API: `npm run start:dev`.
+
+The Compose service persists data in the `cms-postgres-data` Docker volume. For schema development, use `npm run prisma:migrate:dev -- --name describe_change` and commit the generated `prisma/migrations` files. For production, back up the database and run `npm run prisma:migrate:deploy` as a release step before starting the new API version. Do not use `prisma db push` in production.
+
+## Import the existing SQLite data
+
+The previous `applications.sqlite` file is intentionally retained as a read-only migration source and ignored by Git. First apply the PostgreSQL migrations to an empty target database. Review a dry run:
+
+```bash
+npm run db:import:dry-run
+```
+
+The dry run reports counts and detected invalid/duplicate relationship rows without showing emails, password hashes, or tokens, and does not write to PostgreSQL. Import only after reviewing the counts:
+
+```bash
+npm run db:import
+```
+
+The importer refuses non-empty PostgreSQL tables, preserves UUIDs where valid, remaps malformed IDs while retaining relationships, validates enum values and foreign-key ownership, caps memberships at 10, assigns users missing a group, and verifies imported row counts. Invalid records are skipped and counted; duplicated user memberships after the oldest one are skipped and counted. It does not invent application stage history. Keep a separate backup of the SQLite file until imported counts and application behavior have been checked.
+
+## Tests
+
+Tests use PostgreSQL, not SQLite. Set `TEST_DATABASE_URL` in `.env` to a dedicated empty database named `cms_test`; the test setup refuses to run without it and switches the app's `DATABASE_URL` to that database. Create it once:
+
+```bash
+docker compose exec postgres sh -c 'createdb -U "$POSTGRES_USER" cms_test'
+```
+
+Apply migrations to the test database and run the suite:
+
+```bash
+npm run prisma:migrate:test
+npm test -- --runInBand
+npm run test:e2e
+```
+
+The e2e suite truncates application tables in `cms_test` between suites. Never point `TEST_DATABASE_URL` at a development or production database.
+
+## Data model and behavior
+
+- A user has at most one membership; a database trigger serializes membership writes per group and enforces the 10-member limit.
+- Registration uses a PostgreSQL advisory lock and a serializable transaction with conflict retries to assign each user atomically.
+- Application updates and stage-transition records share one transaction. Non-stage edits create no transition.
+- Application queries, dashboard counts, member progress, and recent progress are scoped and aggregated in PostgreSQL.
+- Deleting a user cascades to their memberships, applications, and stage transitions. Deleting a group with memberships is restricted.
+- Search uses PostgreSQL case-insensitive matching; existing API paths and response shapes remain compatible.
+
+## Social authentication
+
+Google sign-in uses a server-side authorization-code flow and returns to the frontend with the existing access and refresh HttpOnly cookies. Provider tokens are never returned to the frontend or stored in the database. New provider users receive the same automatic group assignment as email/password registrations.
+
+Configure the social-login variables in the backend `.env` using the placeholders in `.env.example`. Register these exact callback URLs with the providers:
+
+- `GOOGLE_REDIRECT_URI` → `http://localhost:3000/auth/google/callback`
+The frontend can begin a flow by navigating to `/auth/google` on the API. Production callback URLs must use HTTPS and exactly match the provider console configuration. Keep the Google client secret on the backend only.
+
+Provider identities are keyed by the verified provider subject, never by email. If a verified provider email already belongs to a password account without that provider identity, the callback returns to `/auth/login` with `socialError=account_link_required`; it does not merge the accounts.
+
+## API
+
+- `POST /auth/register`, `POST /auth/login`, `POST /auth/logout`, `POST /auth/refresh`, `GET /auth/me`
+- `GET /auth/google`, `GET /auth/google/callback`
+- `GET|POST /applications`, `GET|PATCH|DELETE /applications/:id`, `GET /applications/dashboard`
+- `GET /members/progress`, `GET /members/progress/recent`
+
+Credentialed CORS uses `FRONTEND_ORIGIN`. Production requires distinct random `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` values.

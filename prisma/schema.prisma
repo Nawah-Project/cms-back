@@ -35,12 +35,18 @@ enum AuthProvider {
   GOOGLE
 }
 
+enum UserRole {
+  USER
+  ADMIN
+}
+
 model User {
   id               String                       @id @default(uuid()) @db.Uuid
   name             String
   email            String                       @unique
   passwordHash     String?
   refreshTokenHash String?
+  role             UserRole                     @default(USER)
   createdAt        DateTime                     @default(now())
   updatedAt        DateTime                     @updatedAt
   membership       Membership?
@@ -109,6 +115,7 @@ model Application {
   @@index([userId, applicationDate], map: "IDX_applications_userId_applicationDate")
   @@index([userId, updatedAt], map: "IDX_applications_userId_updatedAt")
   @@index([userId, companyName], map: "IDX_applications_userId_companyName")
+  @@index([createdAt], map: "IDX_applications_createdAt")
   @@map("applications")
 }
 

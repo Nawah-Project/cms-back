@@ -199,6 +199,11 @@ export class MembersService {
           stage: true,
           outcome: true,
           createdAt: true,
+          transitions: {
+            select: { fromStage: true },
+            orderBy: [{ changedAt: 'asc' }, { id: 'asc' }],
+            take: 1,
+          },
           user: { select: { id: true, name: true } },
         },
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -234,8 +239,12 @@ export class MembersService {
           applicationMethod: row.applicationMethod,
         },
         fromStage: null,
-        toStage: row.stage,
-        outcome: row.outcome === ApplicationOutcome.NONE ? null : row.outcome,
+        toStage: row.transitions?.[0]?.fromStage ?? row.stage,
+        outcome:
+          (row.transitions?.length ?? 0) > 0 ||
+          row.outcome === ApplicationOutcome.NONE
+            ? null
+            : row.outcome,
         changedAt: row.createdAt.toISOString(),
       })),
     ];

@@ -52,6 +52,8 @@ The e2e suite truncates application tables in `cms_test` between suites. Never p
 - Registration uses a PostgreSQL advisory lock and a serializable transaction with conflict retries to assign each user atomically.
 - Application updates and stage-transition records share one transaction. Non-stage edits create no transition.
 - Application queries, dashboard counts, member progress, and recent progress are scoped and aggregated in PostgreSQL.
+- Group capacity is reused in oldest-first order. Removing a membership preserves its user, applications, and stage history; administrators can later assign an unassigned user to the oldest group with space.
+- Admin monitoring calculates activity from application creation/update timestamps and stage-transition history. User profile/authentication timestamps are excluded. Inactivity thresholds are centralized: warning at 3 days, critical at 7 days.
 - Deleting a user cascades to their memberships, applications, and stage transitions. Deleting a group with memberships is restricted.
 - Search uses PostgreSQL case-insensitive matching; existing API paths and response shapes remain compatible.
 
@@ -72,5 +74,9 @@ Provider identities are keyed by the verified provider subject, never by email. 
 - `GET /auth/google`, `GET /auth/google/callback`
 - `GET|POST /applications`, `GET|PATCH|DELETE /applications/:id`, `GET /applications/dashboard`
 - `GET /members/progress`, `GET /members/progress/recent`
+- Admin-only: `DELETE /admin/groups/:groupId/members/:userId`, `POST /admin/users/:userId/group-assignment` (optional JSON body `{ "groupId": "..." }` to choose an available group; without it, the backend selects the oldest available group)
+- Admin-only monitoring: `GET /admin/monitoring/overview`, `GET /admin/monitoring/users?page=1&limit=20&activityStatus=WARNING`, `GET /admin/monitoring/groups`, `GET /admin/monitoring/activity?limit=20`, `GET /admin/monitoring/users/:userId`
+
+New accounts receive the `USER` role. After applying migrations, grant administrator access through a trusted database session, for example: `UPDATE users SET role = 'ADMIN' WHERE email = 'admin@example.com';`. Admin routes verify this database role on every request; client-supplied role data is never trusted.
 
 Credentialed CORS uses `FRONTEND_ORIGIN`. Production requires distinct random `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` values.

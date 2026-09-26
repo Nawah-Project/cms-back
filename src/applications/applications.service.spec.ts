@@ -95,6 +95,12 @@ describe('ApplicationsService', () => {
     ).not.toHaveBeenCalled();
   });
 
+  it('does not update job-search activity timestamps for a no-op application edit', async () => {
+    await service.update('user-id', 'application-id', {});
+    expect(transaction.application.update).not.toHaveBeenCalled();
+    expect(transaction.applicationStageTransition.create).not.toHaveBeenCalled();
+  });
+
   it('requires an outcome when closing an application', async () => {
     await expect(
       service.update('user-id', 'application-id', {

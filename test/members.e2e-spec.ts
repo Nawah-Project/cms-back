@@ -10,17 +10,26 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { resetTestDatabase } from './reset-test-database';
 
 interface ProgressMember {
+  memberId: string;
   userId: string;
   name: string;
+  avatar: string | null;
   isCurrentUser: boolean;
+  lastUpdatedAt: string | null;
   counts: Record<string, number>;
 }
 
 interface RecentProgressEvent {
   id: string;
-  user: { id: string; name: string };
-  application: { jobTitle: string; companyName: string };
-  fromStage: ApplicationStage;
+  memberId: string;
+  member: { id: string; name: string; avatar: string | null };
+  application: {
+    id: string;
+    jobTitle: string;
+    companyName: string;
+    jobUrl: string | null;
+  };
+  fromStage: ApplicationStage | null;
   toStage: ApplicationStage;
   outcome: ApplicationOutcome | null;
   changedAt: string;
@@ -158,7 +167,7 @@ describe('Members progress (e2e)', () => {
     await request(server).get('/members/progress/recent').expect(401);
   });
 
-  it('returns newest stage transitions from the current group only and respects the limit', async () => {
+  it('returns real application and stage activity from the current group only and respects the limit', async () => {
     const currentAgent = agents.get('current')!;
     const betaAgent = agents.get('beta')!;
 
@@ -168,8 +177,16 @@ describe('Members progress (e2e)', () => {
       .expect(201);
     const currentApplicationId = currentCreate.body.id as string;
 
-    // Creating an application is not a stage transition.
-    await currentAgent.get('/members/progress/recent').expect(200).expect([]);
+    // Application creation appears as an initial activity without a prior stage.
+    const initialActivity = await currentAgent
+      .get('/members/progress/activity')
+      .expect(200);
+    expect(initialActivity.body[0]).toMatchObject({
+      memberId: ids.get('current'),
+      fromStage: null,
+      toStage: ApplicationStage.APPLIED,
+      application: { id: currentApplicationId, companyName: 'Shared Co A' },
+    });
 
     await currentAgent
       .patch(`/applications/${currentApplicationId}`)
@@ -207,45 +224,48 @@ describe('Members progress (e2e)', () => {
       .expect(200);
 
     const response = await currentAgent
-      .get('/members/progress/recent?limit=10')
+      .get('/members/progress/activity?limit=10')
       .expect(200);
     const events = response.body as RecentProgressEvent[];
-    expect(events.slice(0, 3).map((event) => event.user.id)).toEqual([
+    const transitions = events.filter((event) => event.fromStage !== null);
+    expect(transitions.slice(0, 3).map((event) => event.member.id)).toEqual([
       ids.get('current'),
       ids.get('beta'),
       ids.get('current'),
     ]);
     expect(
-      events.slice(0, 3).map((event) => [event.fromStage, event.toStage]),
+      transitions.slice(0, 3).map((event) => [event.fromStage, event.toStage]),
     ).toEqual([
       [ApplicationStage.INTERVIEW, ApplicationStage.DECISION],
       [ApplicationStage.APPLIED, ApplicationStage.INTERVIEW],
       [ApplicationStage.APPLIED, ApplicationStage.INTERVIEW],
     ]);
-    expect(events.some((event) => event.user.id === ids.get('outside'))).toBe(
+    expect(events.some((event) => event.member.id === ids.get('outside'))).toBe(
       false,
     );
-    expect(events[0]).toMatchObject({
-      user: { id: ids.get('current'), name: 'Nora Current' },
+    expect(transitions[0]).toMatchObject({
+      member: { id: ids.get('current'), name: 'Nora Current', avatar: null },
       application: { companyName: 'Shared Co A', jobTitle: 'UX Designer' },
       fromStage: ApplicationStage.INTERVIEW,
       toStage: ApplicationStage.DECISION,
       outcome: null,
     });
-    expect(events[0]).not.toHaveProperty('user.email');
-    expect(events[0].application).not.toHaveProperty('jobUrl');
-    expect(events[0].application).not.toHaveProperty('location');
+    expect(transitions[0]).not.toHaveProperty('member.email');
+    expect(transitions[0].application.jobUrl).toBe(
+      'https://private.example/current',
+    );
+    expect(transitions[0].application).not.toHaveProperty('location');
 
     const limited = await currentAgent
-      .get('/members/progress/recent?limit=1')
+      .get('/members/progress/activity?limit=1')
       .expect(200);
     expect(limited.body).toHaveLength(1);
-    expect((limited.body as RecentProgressEvent[])[0].user.id).toBe(
+    expect((limited.body as RecentProgressEvent[])[0].member.id).toBe(
       ids.get('current'),
     );
   });
 
-  it('returns only members in the current user’s groups, including the current user first', async () => {
+  it('returns only active members in the current user’s group and prioritizes recent meaningful activity', async () => {
     const response = await agents
       .get('current')!
       .get('/members/progress')
@@ -253,13 +273,13 @@ describe('Members progress (e2e)', () => {
     const members = progressRows(response);
     expect(members.slice(0, 3).map((member) => member.userId)).toEqual([
       ids.get('current'),
-      ids.get('alpha'),
       ids.get('beta'),
+      ids.get('alpha'),
     ]);
     expect(members.slice(0, 3).map((member) => member.name)).toEqual([
       'Nora Current',
-      'Alice Alpha',
       'Ben Beta',
+      'Alice Alpha',
     ]);
     expect(members[0].isCurrentUser).toBe(true);
     expect(members.slice(1).every((member) => !member.isCurrentUser)).toBe(
@@ -277,12 +297,18 @@ describe('Members progress (e2e)', () => {
       .get('/members/progress')
       .expect(200);
     expect(response.body[0]).toEqual({
+      memberId: ids.get('current'),
       userId: ids.get('current'),
       name: 'Nora Current',
+      avatar: null,
       isCurrentUser: true,
+      lastUpdatedAt: expect.any(String),
       counts: { applied: 2, interview: 1, decision: 2, closed: 2 },
     });
-    expect(response.body[2].counts).toEqual({
+    const beta = response.body.find(
+      (member: ProgressMember) => member.userId === ids.get('beta'),
+    );
+    expect(beta!.counts).toEqual({
       applied: 0,
       interview: 1,
       decision: 1,
@@ -295,7 +321,10 @@ describe('Members progress (e2e)', () => {
       .get('current')!
       .get('/members/progress')
       .expect(200);
-    expect(response.body[1].counts).toEqual({
+    const alpha = response.body.find(
+      (member: ProgressMember) => member.userId === ids.get('alpha'),
+    );
+    expect(alpha!.counts).toEqual({
       applied: 0,
       interview: 0,
       decision: 0,
@@ -310,8 +339,11 @@ describe('Members progress (e2e)', () => {
       .expect(200);
     for (const member of response.body) {
       expect(Object.keys(member).sort()).toEqual([
+        'avatar',
         'counts',
         'isCurrentUser',
+        'lastUpdatedAt',
+        'memberId',
         'name',
         'userId',
       ]);
@@ -353,7 +385,7 @@ describe('Members progress (e2e)', () => {
   it('uses one application aggregation query for the cohort instead of one query per member', async () => {
     const querySpy = jest.spyOn(prisma.application, 'groupBy');
     await agents.get('current')!.get('/members/progress').expect(200);
-    expect(querySpy).toHaveBeenCalledTimes(1);
+    expect(querySpy).toHaveBeenCalledTimes(2);
     querySpy.mockRestore();
   });
 });

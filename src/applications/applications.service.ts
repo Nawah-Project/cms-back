@@ -180,32 +180,40 @@ export class ApplicationsService {
         );
       }
       this.validateStageAndOutcome(nextStage, nextOutcome);
+      const data: Prisma.ApplicationUpdateInput = {};
+      if (updateDto.companyName !== undefined) {
+        const companyName = updateDto.companyName.trim();
+        if (companyName !== application.companyName) data.companyName = companyName;
+      }
+      if (updateDto.jobTitle !== undefined) {
+        const jobTitle = updateDto.jobTitle.trim();
+        if (jobTitle !== application.jobTitle) data.jobTitle = jobTitle;
+      }
+      if (updateDto.applicationDate !== undefined) {
+        const applicationDate = this.formatDate(updateDto.applicationDate);
+        if (applicationDate !== application.applicationDate)
+          data.applicationDate = applicationDate;
+      }
+      if (updateDto.location !== undefined) {
+        const location = updateDto.location?.trim() || null;
+        if (location !== application.location) data.location = location;
+      }
+      if (
+        updateDto.applicationMethod !== undefined &&
+        updateDto.applicationMethod !== application.applicationMethod
+      ) {
+        data.applicationMethod = updateDto.applicationMethod;
+      }
+      if (updateDto.jobUrl !== undefined) {
+        const jobUrl = updateDto.jobUrl?.trim() || null;
+        if (jobUrl !== application.jobUrl) data.jobUrl = jobUrl;
+      }
+      if (nextStage !== application.stage) data.stage = nextStage;
+      if (nextOutcome !== application.outcome) data.outcome = nextOutcome;
+      if (Object.keys(data).length === 0) return application;
       const updated = await transaction.application.update({
         where: { id },
-        data: {
-          ...(updateDto.companyName !== undefined
-            ? { companyName: updateDto.companyName.trim() }
-            : {}),
-          ...(updateDto.jobTitle !== undefined
-            ? { jobTitle: updateDto.jobTitle.trim() }
-            : {}),
-          ...(updateDto.applicationDate !== undefined
-            ? { applicationDate: this.formatDate(updateDto.applicationDate) }
-            : {}),
-          ...(updateDto.location !== undefined
-            ? { location: updateDto.location?.trim() || null }
-            : {}),
-          ...(updateDto.applicationMethod !== undefined
-            ? {
-                applicationMethod: updateDto.applicationMethod,
-              }
-            : {}),
-          ...(updateDto.jobUrl !== undefined
-            ? { jobUrl: updateDto.jobUrl?.trim() || null }
-            : {}),
-          stage: nextStage,
-          outcome: nextOutcome,
-        },
+        data,
       });
       if (previousStage.toString() !== nextStage.toString()) {
         await transaction.applicationStageTransition.create({

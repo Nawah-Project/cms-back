@@ -7,9 +7,16 @@ import { MembersModule } from './members/members.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { APP_FILTER } from '@nestjs/core';
 import { PrismaExceptionFilter } from './prisma/prisma-exception.filter';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, ApplicationsModule, MembersModule],
+  imports: [
+    PrismaModule,
+    AuthModule,
+    ApplicationsModule,
+    MembersModule,
+    AdminModule,
+  ],
   controllers: [AppController],
   providers: [
     AppService,

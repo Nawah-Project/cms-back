@@ -3,7 +3,7 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
-import { AuthProvider, Prisma } from '@prisma/client';
+import { AuthProvider, Prisma, UserRole } from '@prisma/client';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { createHash, randomUUID, timingSafeEqual } from 'crypto';
@@ -23,6 +23,7 @@ export interface PublicUser {
   id: string;
   name: string;
   email: string;
+  role?: UserRole;
 }
 
 export interface TokenPair {
@@ -51,7 +52,7 @@ export class AuthService {
   }
 
   private toPublicUser(user: PublicUser): PublicUser {
-    return { id: user.id, name: user.name, email: user.email };
+    return { id: user.id, name: user.name, email: user.email, role: user.role };
   }
 
   private async issueTokens(user: PublicUser): Promise<TokenPair> {
@@ -97,7 +98,7 @@ export class AuthService {
         async (transaction) => {
           const created = await transaction.user.create({
             data: { name: dto.name.trim(), email, passwordHash },
-            select: { id: true, name: true, email: true },
+            select: { id: true, name: true, email: true, role: true },
           });
           await this.groupAssignment.assignUser(transaction, created.id);
           return created;
@@ -121,7 +122,13 @@ export class AuthService {
   async login(dto: LoginDto): Promise<{ user: PublicUser; tokens: TokenPair }> {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email.trim().toLowerCase() },
-      select: { id: true, name: true, email: true, passwordHash: true },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        passwordHash: true,
+        role: true,
+      },
     });
     if (
       !user?.passwordHash ||
@@ -150,7 +157,7 @@ export class AuthService {
             },
           },
           include: {
-            user: { select: { id: true, name: true, email: true } },
+            user: { select: { id: true, name: true, email: true, role: true } },
           },
         });
         if (identity) return identity.user;
@@ -161,7 +168,7 @@ export class AuthService {
 
         const emailAccount = await transaction.user.findUnique({
           where: { email: providerEmail },
-          select: { id: true },
+          select: { id: true, role: true },
         });
         if (emailAccount) throw new AccountLinkRequiredError();
 
@@ -171,7 +178,7 @@ export class AuthService {
             email: providerEmail,
             passwordHash: null,
           },
-          select: { id: true, name: true, email: true },
+          select: { id: true, name: true, email: true, role: true },
         });
         await transaction.authIdentity.create({
           data: {
@@ -205,7 +212,13 @@ export class AuthService {
       throw new UnauthorizedException('Invalid refresh token');
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { id: true, name: true, email: true, refreshTokenHash: true },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        refreshTokenHash: true,
+        role: true,
+      },
     });
     if (
       !user?.refreshTokenHash ||
@@ -249,7 +262,7 @@ export class AuthService {
   async me(userId: string): Promise<PublicUser> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, name: true, email: true },
+      select: { id: true, name: true, email: true, role: true },
     });
     if (!user) throw new UnauthorizedException('Invalid session');
     return user;

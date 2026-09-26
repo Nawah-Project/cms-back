@@ -2,7 +2,7 @@ import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
-const GROUP_CAPACITY = 10;
+export const MAX_GROUP_SIZE = 10;
 const REGISTRATION_LOCK_KEY = 684_206_731_104;
 
 @Injectable()
@@ -54,15 +54,19 @@ export class GroupAssignmentService implements OnApplicationBootstrap {
   async assignUser(
     transaction: Prisma.TransactionClient | PrismaClient,
     userId: string,
-  ): Promise<void> {
-    if (await transaction.membership.findUnique({ where: { userId } })) return;
+  ): Promise<string> {
+    const existing = await transaction.membership.findUnique({
+      where: { userId },
+      select: { groupId: true },
+    });
+    if (existing) return existing.groupId;
 
     const groups = await transaction.group.findMany({
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       include: { _count: { select: { memberships: true } } },
     });
     let group = groups.find(
-      (candidate) => candidate._count.memberships < GROUP_CAPACITY,
+      (candidate) => candidate._count.memberships < MAX_GROUP_SIZE,
     );
     if (!group) {
       const largestNumber = groups.reduce((largest, item) => {
@@ -78,5 +82,6 @@ export class GroupAssignmentService implements OnApplicationBootstrap {
     await transaction.membership.create({
       data: { userId, groupId: group.id },
     });
+    return group.id;
   }
 }

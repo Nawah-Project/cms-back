@@ -423,6 +423,8 @@ export class AdminService {
           name: true,
           role: true,
           createdAt: true,
+          portfolioUrl: true,
+          cv: { select: { id: true } },
           membership: {
             select: { group: { select: { id: true, name: true } } },
           },
@@ -485,6 +487,8 @@ export class AdminService {
         name: user.name,
         role: user.role,
         createdAt: user.createdAt.toISOString(),
+        portfolioUrl: user.portfolioUrl,
+        hasCv: Boolean(user.cv),
         group: user.membership?.group ?? null,
       },
       lastActivityAt: lastActivityAt?.toISOString() ?? null,

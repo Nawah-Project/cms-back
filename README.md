@@ -74,9 +74,13 @@ Provider identities are keyed by the verified provider subject, never by email. 
 - `GET /auth/google`, `GET /auth/google/callback`
 - `GET|POST /applications`, `GET|PATCH|DELETE /applications/:id`, `GET /applications/dashboard`
 - `GET /members/progress`, `GET /members/progress/recent`
+- `GET /profile`, `PATCH /profile` with `{ "portfolioUrl": "https://..." }`, and `POST /profile/cv` with multipart field `file` (PDF only)
+- Authenticated `GET /users/:userId/cv` streams the CV for its owner, an active same-group member, or an administrator
 - Admin-only: `DELETE /admin/groups/:groupId/members/:userId`, `POST /admin/users/:userId/group-assignment` (optional JSON body `{ "groupId": "..." }` to choose an available group; without it, the backend selects the oldest available group)
 - Admin-only monitoring: `GET /admin/monitoring/overview`, `GET /admin/monitoring/users?page=1&limit=20&activityStatus=WARNING`, `GET /admin/monitoring/groups`, `GET /admin/monitoring/activity?limit=20`, `GET /admin/monitoring/users/:userId`
 
 New accounts receive the `USER` role. After applying migrations, grant administrator access through a trusted database session, for example: `UPDATE users SET role = 'ADMIN' WHERE email = 'admin@example.com';`. Admin routes verify this database role on every request; client-supplied role data is never trusted.
 
-Credentialed CORS uses `FRONTEND_ORIGIN`. Production requires distinct random `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` values.
+Credentialed CORS uses the comma-separated `FRONTEND_ORIGIN` allowlist (for example `http://localhost:5173,http://localhost:5174`). Restart the backend after changing it. Production requires distinct random `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` values.
+
+CV files are stored outside public/static serving under `private-storage/cvs` by default. Set `CV_STORAGE_DIR` to a private persistent volume in production. `CV_MAX_FILE_SIZE_BYTES` configures the PDF upload limit (5 MiB default, capped at 25 MiB). PostgreSQL stores only the CV metadata and private storage key.

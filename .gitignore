@@ -2,6 +2,7 @@
 /dist
 /node_modules
 /build
+/private-storage
 
 # Logs
 logs
@@ -59,4 +60,3 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 *.sqlite
 *.sqlite-journal
 *.db
-

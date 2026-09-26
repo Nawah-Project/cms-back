@@ -6,13 +6,21 @@ import {
 import { ApplicationOutcome, ApplicationStage, Prisma } from '@prisma/client';
 import { PrismaService as Database } from '../prisma/prisma.service';
 
-type MemberSummary = { id: string; name: string; avatar: string | null };
+type MemberSummary = {
+  id: string;
+  name: string;
+  avatar: string | null;
+  portfolioUrl?: string | null;
+  hasCv?: boolean;
+};
 
 export interface MemberProgress {
   memberId: string;
   userId: string;
   name: string;
   avatar: string | null;
+  portfolioUrl: string | null;
+  hasCv: boolean;
   isCurrentUser: boolean;
   lastUpdatedAt: string | null;
   counts: {
@@ -73,7 +81,16 @@ export class MembersService {
     ] = await Promise.all([
       this.prisma.membership.findMany({
         where: { userId: { in: memberIds } },
-        select: { userId: true, user: { select: { name: true } } },
+        select: {
+          userId: true,
+          user: {
+            select: {
+              name: true,
+              portfolioUrl: true,
+              cv: { select: { id: true } },
+            },
+          },
+        },
       }),
       this.prisma.application.groupBy({
         by: ['userId', 'stage'],
@@ -121,6 +138,9 @@ export class MembersService {
     const nameByUser = new Map(
       memberships.map(({ userId, user }) => [userId, user.name]),
     );
+    const profileByUser = new Map(
+      memberships.map(({ userId, user }) => [userId, user]),
+    );
 
     return memberIds
       .map((userId) => ({
@@ -128,6 +148,8 @@ export class MembersService {
         userId,
         name: nameByUser.get(userId) ?? '',
         avatar: null,
+        portfolioUrl: profileByUser.get(userId)?.portfolioUrl ?? null,
+        hasCv: Boolean(profileByUser.get(userId)?.cv),
         isCurrentUser: userId === currentUserId,
         lastUpdatedAt: latestByUser.get(userId)?.toISOString() ?? null,
         counts: countsByUser.get(userId)!,
@@ -262,7 +284,12 @@ export class MembersService {
       throw new NotFoundException('Member not found');
     const member = await this.prisma.user.findUnique({
       where: { id: targetMemberId },
-      select: { id: true, name: true },
+      select: {
+        id: true,
+        name: true,
+        portfolioUrl: true,
+        cv: { select: { id: true } },
+      },
     });
     if (!member) throw new NotFoundException('Member not found');
     const [applicationActivity, transitionActivity, applications] =
@@ -337,7 +364,14 @@ export class MembersService {
       }
     }
     return {
-      member: { ...member, avatar: null, lastUpdatedAt },
+      member: {
+        id: member.id,
+        name: member.name,
+        avatar: null,
+        portfolioUrl: member.portfolioUrl ?? null,
+        hasCv: Boolean(member.cv),
+        lastUpdatedAt,
+      },
       applications: applications.map((application) => ({
         ...application,
         outcome:

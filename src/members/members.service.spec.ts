@@ -79,6 +79,8 @@ describe('MembersService', () => {
     expect(result[1].lastUpdatedAt).toBe('2026-02-01T00:00:00.000Z');
     expect(result[0].counts.applied).toBe(1);
     expect(result[0].avatar).toBeNull();
+    expect(result[0].portfolioUrl).toBeNull();
+    expect(result[0].hasCv).toBe(false);
     expect(prisma.application.groupBy).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { userId: { in: ['member-a', 'member-b'] } },
@@ -145,6 +147,12 @@ describe('MembersService', () => {
   });
 
   it('returns member application details and same-group shared-company members', async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'member-a',
+      name: 'A',
+      portfolioUrl: 'https://portfolio.example',
+      cv: { id: 'cv-id' },
+    });
     prisma.application.aggregate.mockResolvedValue({
       _max: {
         createdAt: new Date('2026-01-01'),
@@ -175,6 +183,11 @@ describe('MembersService', () => {
     const result = await service.getMemberDetail('member-a', 'member-a');
 
     expect(result.member.lastUpdatedAt).toBe('2026-01-03T00:00:00.000Z');
+    expect(result.member).toMatchObject({
+      portfolioUrl: 'https://portfolio.example',
+      hasCv: true,
+    });
+    expect(result.member).not.toHaveProperty('email');
     expect(result.applications[0]).toMatchObject({
       sharedCompany: true,
       otherMembers: [{ id: 'member-b', name: 'B', avatar: null }],

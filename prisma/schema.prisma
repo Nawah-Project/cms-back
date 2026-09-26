@@ -47,14 +47,29 @@ model User {
   passwordHash     String?
   refreshTokenHash String?
   role             UserRole                     @default(USER)
+  portfolioUrl     String?                      @db.VarChar(2048)
   createdAt        DateTime                     @default(now())
   updatedAt        DateTime                     @updatedAt
   membership       Membership?
   applications     Application[]
   transitions      ApplicationStageTransition[]
   authIdentities   AuthIdentity[]
+  cv               UserCv?
 
   @@map("users")
+}
+
+model UserCv {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @unique @db.Uuid
+  originalName String   @db.VarChar(255)
+  mimeType     String   @db.VarChar(100)
+  size         Int
+  storageKey   String   @unique @db.VarChar(64)
+  uploadedAt   DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_cvs")
 }
 
 model AuthIdentity {

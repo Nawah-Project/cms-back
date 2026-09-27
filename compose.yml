@@ -11,8 +11,10 @@ services:
       - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - cms-postgres-data:/var/lib/postgresql/data
+    networks:
+      - nawah
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      test: [ "CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\"" ]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -22,6 +24,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: cms-api
     restart: unless-stopped
     environment:
       NODE_ENV: ${NODE_ENV:-production}
@@ -47,6 +50,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - nawah
     healthcheck:
       test:
         - CMD
@@ -60,17 +65,24 @@ services:
 
   frontend:
     build:
-      context: ../CMS
+      context: ../cms-front
       dockerfile: Dockerfile
       args:
         VITE_API_URL: ${VITE_API_URL:?Set VITE_API_URL to the public backend URL}
+    container_name: cms-front
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${FRONTEND_HOST_PORT:-8080}:3000"
+      - "127.0.0.1:${FRONTEND_HOST_PORT:-8081}:3000"
     depends_on:
       api:
         condition: service_healthy
+    networks:
+      - nawah
 
 volumes:
   cms-postgres-data:
   cv-storage:
+
+networks:
+  nawah:
+    external: true

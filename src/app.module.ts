@@ -11,6 +11,7 @@ import { AdminModule } from './admin/admin.module';
 import { ProfileModule } from './profile/profile.module';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { HealthController } from './health.controller';
+import { TasksModule } from './tasks/tasks.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { HealthController } from './health.controller';
     MembersModule,
     AdminModule,
     ProfileModule,
+    TasksModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

@@ -27,6 +27,7 @@ export interface DashboardStats {
     accepted: number;
     rejected: number;
     withdrawn: number;
+    noResponse: number;
   };
   recentApplications: Array<
     Pick<
@@ -69,10 +70,11 @@ export class ApplicationsService {
           ApplicationOutcome.ACCEPTED,
           ApplicationOutcome.REJECTED,
           ApplicationOutcome.WITHDRAWN,
+          ApplicationOutcome.NO_RESPONSE,
         ].includes(outcome)
       ) {
         throw new BadRequestException(
-          'An application with stage CLOSED must have an outcome of ACCEPTED, REJECTED, or WITHDRAWN',
+          'An application with stage CLOSED must have a valid closing outcome',
         );
       }
     } else if (outcome !== ApplicationOutcome.NONE) {
@@ -88,6 +90,11 @@ export class ApplicationsService {
   ): Promise<DbApplication> {
     const stage = createDto.stage || ApplicationStage.APPLIED;
     const outcome = createDto.outcome || ApplicationOutcome.NONE;
+    if (outcome === ApplicationOutcome.NO_RESPONSE) {
+      throw new BadRequestException(
+        'NO_RESPONSE is assigned automatically after seven days without a response',
+      );
+    }
     this.validateStageAndOutcome(stage, outcome);
     return this.prisma.application.create({
       data: {
@@ -100,6 +107,7 @@ export class ApplicationsService {
         jobUrl: createDto.jobUrl?.trim() || null,
         stage,
         outcome,
+        closedAt: stage === ApplicationStage.CLOSED ? new Date() : null,
       },
     });
   }
@@ -152,6 +160,11 @@ export class ApplicationsService {
     id: string,
     updateDto: UpdateApplicationDto,
   ): Promise<DbApplication> {
+    if (updateDto.outcome === ApplicationOutcome.NO_RESPONSE) {
+      throw new BadRequestException(
+        'NO_RESPONSE is assigned automatically after seven days without a response',
+      );
+    }
     return this.prisma.$transaction(async (transaction) => {
       const application = await transaction.application.findFirst({
         where: { id, userId },
@@ -183,7 +196,8 @@ export class ApplicationsService {
       const data: Prisma.ApplicationUpdateInput = {};
       if (updateDto.companyName !== undefined) {
         const companyName = updateDto.companyName.trim();
-        if (companyName !== application.companyName) data.companyName = companyName;
+        if (companyName !== application.companyName)
+          data.companyName = companyName;
       }
       if (updateDto.jobTitle !== undefined) {
         const jobTitle = updateDto.jobTitle.trim();
@@ -210,6 +224,10 @@ export class ApplicationsService {
       }
       if (nextStage !== application.stage) data.stage = nextStage;
       if (nextOutcome !== application.outcome) data.outcome = nextOutcome;
+      if (nextStage !== application.stage) {
+        data.closedAt =
+          nextStage === ApplicationStage.CLOSED ? new Date() : null;
+      }
       if (Object.keys(data).length === 0) return application;
       const updated = await transaction.application.update({
         where: { id },
@@ -272,7 +290,8 @@ export class ApplicationsService {
       decision = 0;
     let accepted = 0,
       rejected = 0,
-      withdrawn = 0;
+      withdrawn = 0,
+      noResponse = 0;
     for (const row of groups) {
       const count = row._count._all;
       if (row.stage === 'APPLIED') applied += count;
@@ -282,6 +301,7 @@ export class ApplicationsService {
         if (row.outcome === 'ACCEPTED') accepted += count;
         else if (row.outcome === 'REJECTED') rejected += count;
         else if (row.outcome === 'WITHDRAWN') withdrawn += count;
+        else if (row.outcome === 'NO_RESPONSE') noResponse += count;
       }
     }
     return {
@@ -292,10 +312,11 @@ export class ApplicationsService {
         decision,
       },
       closed: {
-        total: accepted + rejected + withdrawn,
+        total: accepted + rejected + withdrawn + noResponse,
         accepted,
         rejected,
         withdrawn,
+        noResponse,
       },
       recentApplications,
     };

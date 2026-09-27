@@ -57,6 +57,16 @@ describe('ApplicationsService', () => {
     ).not.toHaveBeenCalled();
   });
 
+  it('does not allow a member to manually set NO_RESPONSE', async () => {
+    await expect(
+      service.create('user-id', {
+        companyName: 'New Co',
+        jobTitle: 'Designer',
+        outcome: ApplicationOutcome.NO_RESPONSE,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
   it('preserves optional application fields', async () => {
     const result = await service.create('user-id', {
       companyName: 'Google',
@@ -98,7 +108,9 @@ describe('ApplicationsService', () => {
   it('does not update job-search activity timestamps for a no-op application edit', async () => {
     await service.update('user-id', 'application-id', {});
     expect(transaction.application.update).not.toHaveBeenCalled();
-    expect(transaction.applicationStageTransition.create).not.toHaveBeenCalled();
+    expect(
+      transaction.applicationStageTransition.create,
+    ).not.toHaveBeenCalled();
   });
 
   it('requires an outcome when closing an application', async () => {

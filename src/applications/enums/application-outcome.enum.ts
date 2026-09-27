@@ -3,4 +3,5 @@ export enum ApplicationOutcome {
   ACCEPTED = 'ACCEPTED',
   REJECTED = 'REJECTED',
   WITHDRAWN = 'WITHDRAWN',
+  NO_RESPONSE = 'NO_RESPONSE',
 }

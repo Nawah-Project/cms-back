@@ -1,5 +1,5 @@
 import { NotFoundException } from '@nestjs/common';
-import { TaskNoteType, TaskStatus } from '@prisma/client';
+import { TaskNoteType, TaskStatus, TaskSource } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { TasksService } from './tasks.service';
 
@@ -62,6 +62,51 @@ describe('TasksService', () => {
     expect(prisma.taskNote.create).not.toHaveBeenCalled();
   });
 
+  it('derives personal task owner, creator, and source from the authenticated member', async () => {
+    prisma.task.create.mockImplementation(async ({ data }: any) => ({
+      ...data,
+      dueDate: null,
+      status: TaskStatus.TODO,
+      checklist: [],
+      notes: [],
+      _count: { notes: 0 },
+    }));
+    const task = await service.createPersonal('member-1', {
+      title: 'Practice',
+    });
+    expect(prisma.task.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId: 'member-1',
+          createdById: 'member-1',
+          source: TaskSource.PERSONAL,
+          mentorPriority: false,
+        }),
+      }),
+    );
+    expect(task.source).toBe(TaskSource.PERSONAL);
+  });
+
+  it('rejects mentor priority on a personal task', async () => {
+    await expect(
+      service.createPersonal('member-1', {
+        title: 'Practice',
+        mentorPriority: true,
+      }),
+    ).rejects.toThrow('Personal tasks cannot have mentor priority');
+    expect(prisma.task.create).not.toHaveBeenCalled();
+  });
+
+  it('does not let admins delete a personal task through assigned-task controls', async () => {
+    prisma.task.deleteMany.mockResolvedValue({ count: 0 });
+    await expect(
+      service.deleteForAdmin('personal-task'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.task.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'personal-task', source: TaskSource.MENTOR_ASSIGNED },
+    });
+  });
+
   it('stores a member note as PERSONAL_NOTE under the authenticated identity', async () => {
     prisma.task.findFirst.mockResolvedValue({ id: 'task-1' });
     prisma.taskNote.create.mockResolvedValue({ id: 'note-1' });
@@ -101,7 +146,7 @@ describe('TasksService', () => {
   });
 
   it('creates feedback as a mentor note and does not mark it read', async () => {
-    prisma.task.findUnique.mockResolvedValue({ id: 'task-1' });
+    prisma.task.findFirst.mockResolvedValue({ id: 'task-1' });
     prisma.taskNote.create.mockResolvedValue({ id: 'feedback-1' });
     await service.addMentorFeedback('admin-1', 'task-1', {
       content: 'Please revise this section.',

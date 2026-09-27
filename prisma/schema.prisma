@@ -29,6 +29,11 @@ enum TaskStatus {
   DONE
 }
 
+enum TaskSource {
+  PERSONAL
+  MENTOR_ASSIGNED
+}
+
 enum TaskPriority {
   LOW
   MEDIUM
@@ -191,6 +196,7 @@ model Task {
   id             String              @id @default(uuid()) @db.Uuid
   userId         String              @db.Uuid
   createdById    String              @db.Uuid
+  source         TaskSource          @default(MENTOR_ASSIGNED)
   title          String              @db.VarChar(200)
   description    String?             @db.VarChar(5000)
   status         TaskStatus          @default(TODO)
@@ -208,6 +214,7 @@ model Task {
 
   @@index([userId], map: "IDX_tasks_userId")
   @@index([createdById], map: "IDX_tasks_createdById")
+  @@index([source], map: "IDX_tasks_source")
   @@index([status], map: "IDX_tasks_status")
   @@index([dueDate], map: "IDX_tasks_dueDate")
   @@index([mentorPriority], map: "IDX_tasks_mentorPriority")

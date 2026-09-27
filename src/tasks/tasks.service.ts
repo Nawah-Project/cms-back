@@ -3,7 +3,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, TaskNoteType, TaskStatus } from '@prisma/client';
+import {
+  Prisma,
+  TaskNoteType,
+  TaskStatus,
+  TaskSource,
+  UserRole,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -15,6 +21,7 @@ import {
 } from './dto/task-action.dto';
 
 const taskInclude = {
+  createdBy: { select: { id: true, name: true } },
   checklist: {
     orderBy: [{ position: 'asc' as const }, { createdAt: 'asc' as const }],
   },
@@ -46,19 +53,111 @@ export class TasksService {
   private async assertTaskForUser(taskId: string, userId: string) {
     const task = await this.prisma.task.findFirst({
       where: { id: taskId, userId },
+      select: { id: true, source: true },
+    });
+    if (!task) throw new NotFoundException('Task not found');
+    return task;
+  }
+
+  private async assertAssignedTask(taskId: string) {
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId, source: TaskSource.MENTOR_ASSIGNED },
       select: { id: true },
     });
     if (!task) throw new NotFoundException('Task not found');
     return task;
   }
 
-  private async assertTaskExists(taskId: string) {
-    const task = await this.prisma.task.findUnique({
-      where: { id: taskId },
-      select: { id: true },
+  async createPersonal(userId: string, dto: CreateTaskDto) {
+    if (dto.mentorPriority === true)
+      throw new BadRequestException(
+        'Personal tasks cannot have mentor priority',
+      );
+    this.validateDates(dto.startDate, dto.dueDate);
+    const task = await this.prisma.task.create({
+      data: {
+        userId,
+        createdById: userId,
+        source: TaskSource.PERSONAL,
+        title: dto.title.trim(),
+        description: dto.description?.trim() || null,
+        priority: dto.priority,
+        mentorPriority: false,
+        startDate: dto.startDate ? new Date(dto.startDate) : null,
+        dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+        checklist: dto.checklist?.length
+          ? {
+              create: dto.checklist.map((item, position) => ({
+                title: item.title.trim(),
+                position,
+              })),
+            }
+          : undefined,
+      },
+      include: taskInclude,
+    });
+    return this.present(task);
+  }
+
+  async updatePersonal(userId: string, taskId: string, dto: UpdateTaskDto) {
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId, userId, source: TaskSource.PERSONAL },
+      select: { id: true, startDate: true, dueDate: true, status: true },
     });
     if (!task) throw new NotFoundException('Task not found');
-    return task;
+    if (dto.mentorPriority === true)
+      throw new BadRequestException(
+        'Personal tasks cannot have mentor priority',
+      );
+    this.validateDates(
+      dto.startDate === undefined
+        ? task.startDate?.toISOString()
+        : dto.startDate,
+      dto.dueDate === undefined ? task.dueDate?.toISOString() : dto.dueDate,
+    );
+    const status = dto.status ?? task.status;
+    const updated = await this.prisma.task.update({
+      where: { id: taskId },
+      data: {
+        ...dto,
+        mentorPriority: false,
+        title: dto.title?.trim(),
+        description:
+          dto.description === undefined
+            ? undefined
+            : dto.description?.trim() || null,
+        startDate:
+          dto.startDate === undefined
+            ? undefined
+            : dto.startDate
+              ? new Date(dto.startDate)
+              : null,
+        dueDate:
+          dto.dueDate === undefined
+            ? undefined
+            : dto.dueDate
+              ? new Date(dto.dueDate)
+              : null,
+        completedAt:
+          status === TaskStatus.DONE
+            ? task.status === TaskStatus.DONE
+              ? undefined
+              : new Date()
+            : task.status === TaskStatus.DONE
+              ? null
+              : undefined,
+      },
+      include: taskInclude,
+    });
+    return this.present(updated);
+  }
+
+  async deletePersonal(userId: string, taskId: string) {
+    const result = await this.prisma.task.deleteMany({
+      where: { id: taskId, userId, source: TaskSource.PERSONAL },
+    });
+    if (!result.count) throw new NotFoundException('Task not found');
+    return { success: true };
   }
 
   private present<
@@ -92,13 +191,15 @@ export class TasksService {
     const task = await this.prisma.$transaction(async (tx) => {
       const member = await tx.user.findUnique({
         where: { id: userId },
-        select: { id: true },
+        select: { id: true, role: true },
       });
-      if (!member) throw new NotFoundException('Member not found');
+      if (!member || member.role !== UserRole.USER)
+        throw new NotFoundException('Member not found');
       return tx.task.create({
         data: {
           userId,
           createdById,
+          source: TaskSource.MENTOR_ASSIGNED,
           title: dto.title.trim(),
           description: dto.description?.trim() || null,
           priority: dto.priority,
@@ -174,6 +275,8 @@ export class TasksService {
   async findForAdmin(userId: string, page = 1, requestedLimit = 20) {
     const limit = Math.min(50, Math.max(1, Math.floor(requestedLimit) || 20));
     const safePage = Math.max(1, Math.floor(page) || 1);
+    // Admin development view includes both origins. taskInclude intentionally
+    // filters notes to mentor feedback, so personal notes remain private.
     const where = { userId };
     const [data, total] = await this.prisma.$transaction([
       this.prisma.task.findMany({
@@ -215,7 +318,7 @@ export class TasksService {
 
   async updateForAdmin(taskId: string, dto: UpdateTaskDto) {
     const task = await this.prisma.task.findUnique({
-      where: { id: taskId },
+      where: { id: taskId, source: TaskSource.MENTOR_ASSIGNED },
       select: { id: true, startDate: true, dueDate: true, status: true },
     });
     if (!task) throw new NotFoundException('Task not found');
@@ -286,7 +389,9 @@ export class TasksService {
   }
 
   async deleteForAdmin(taskId: string) {
-    const result = await this.prisma.task.deleteMany({ where: { id: taskId } });
+    const result = await this.prisma.task.deleteMany({
+      where: { id: taskId, source: TaskSource.MENTOR_ASSIGNED },
+    });
     if (!result.count) throw new NotFoundException('Task not found');
     return { success: true };
   }
@@ -296,12 +401,16 @@ export class TasksService {
     taskId: string,
     dto: CreateChecklistDto,
   ) {
-    await this.assertTaskForUser(taskId, userId);
+    const task = await this.assertTaskForUser(taskId, userId);
+    if (task.source === TaskSource.MENTOR_ASSIGNED)
+      throw new BadRequestException(
+        'Members cannot change assigned checklist definitions',
+      );
     return this.createChecklistItem(taskId, dto);
   }
 
   async addChecklistItemForAdmin(taskId: string, dto: CreateChecklistDto) {
-    await this.assertTaskExists(taskId);
+    await this.assertAssignedTask(taskId);
     return this.createChecklistItem(taskId, dto);
   }
 
@@ -326,7 +435,14 @@ export class TasksService {
     itemId: string,
     dto: UpdateChecklistDto,
   ) {
-    await this.assertTaskForUser(taskId, userId);
+    const task = await this.assertTaskForUser(taskId, userId);
+    if (
+      task.source === TaskSource.MENTOR_ASSIGNED &&
+      (dto.title !== undefined || dto.position !== undefined)
+    )
+      throw new BadRequestException(
+        'Members can only complete assigned checklist items',
+      );
     return this.editChecklistItem(taskId, itemId, dto);
   }
 
@@ -335,7 +451,7 @@ export class TasksService {
     itemId: string,
     dto: UpdateChecklistDefinitionDto,
   ) {
-    await this.assertTaskExists(taskId);
+    await this.assertAssignedTask(taskId);
     return this.editChecklistItem(taskId, itemId, dto);
   }
 
@@ -373,12 +489,16 @@ export class TasksService {
   }
 
   async deleteChecklistItem(userId: string, taskId: string, itemId: string) {
-    await this.assertTaskForUser(taskId, userId);
+    const task = await this.assertTaskForUser(taskId, userId);
+    if (task.source === TaskSource.MENTOR_ASSIGNED)
+      throw new BadRequestException(
+        'Members cannot change assigned checklist definitions',
+      );
     return this.removeChecklistItem(taskId, itemId);
   }
 
   async deleteChecklistItemForAdmin(taskId: string, itemId: string) {
-    await this.assertTaskExists(taskId);
+    await this.assertAssignedTask(taskId);
     return this.removeChecklistItem(taskId, itemId);
   }
 
@@ -414,8 +534,8 @@ export class TasksService {
     taskId: string,
     dto: CreateNoteDto,
   ) {
-    const task = await this.prisma.task.findUnique({
-      where: { id: taskId },
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId, source: TaskSource.MENTOR_ASSIGNED },
       select: { id: true },
     });
     if (!task) throw new NotFoundException('Task not found');
@@ -454,8 +574,8 @@ export class TasksService {
   }
 
   async listNotesForAdmin(taskId: string) {
-    const task = await this.prisma.task.findUnique({
-      where: { id: taskId },
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId, source: TaskSource.MENTOR_ASSIGNED },
       select: { id: true },
     });
     if (!task) throw new NotFoundException('Task not found');
@@ -487,7 +607,13 @@ export class TasksService {
   }
 
   async getDashboardSummary(userId: string) {
-    const [counts, recentTasks, unreadMentorFeedbackCount] = await Promise.all([
+    const [
+      counts,
+      recentTasks,
+      unreadMentorFeedbackCount,
+      personalTasks,
+      mentorAssignedTasks,
+    ] = await Promise.all([
       this.prisma.task.groupBy({
         by: ['status'],
         where: { userId, status: { not: TaskStatus.DONE } },
@@ -505,6 +631,12 @@ export class TasksService {
           readAt: null,
           task: { userId },
         },
+      }),
+      this.prisma.task.count({
+        where: { userId, source: TaskSource.PERSONAL },
+      }),
+      this.prisma.task.count({
+        where: { userId, source: TaskSource.MENTOR_ASSIGNED },
       }),
     ]);
     const statusCounts = { TODO: 0, IN_PROGRESS: 0, BLOCKED: 0 };
@@ -534,6 +666,8 @@ export class TasksService {
     ]);
     return {
       totalActiveTasks: activeTasks,
+      personalTasks,
+      mentorAssignedTasks,
       ...statusCounts,
       overdueCount,
       mentorPriorityActiveCount,

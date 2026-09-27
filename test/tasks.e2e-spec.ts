@@ -15,6 +15,7 @@ describe('Professional development tasks (e2e)', () => {
   let stranger: ReturnType<typeof request.agent>;
   let adminId: string;
   let memberId: string;
+  let strangerId: string;
 
   beforeAll(async () => {
     process.env.NODE_ENV = 'test';
@@ -54,6 +55,7 @@ describe('Professional development tasks (e2e)', () => {
     member = memberAccount.agent;
     memberId = memberAccount.id;
     stranger = strangerAccount.agent;
+    strangerId = strangerAccount.id;
     await prisma.user.update({
       where: { id: adminId },
       data: { role: UserRole.ADMIN },
@@ -86,6 +88,7 @@ describe('Professional development tasks (e2e)', () => {
     expect(created.body).toMatchObject({
       userId: memberId,
       createdById: adminId,
+      source: 'MENTOR_ASSIGNED',
       status: 'TODO',
       priority: 'HIGH',
       mentorPriority: false,
@@ -106,6 +109,45 @@ describe('Professional development tasks (e2e)', () => {
       .post(`/tasks/${taskId}/notes`)
       .send({ content: 'Not my task' })
       .expect(404);
+    await member.delete(`/tasks/${taskId}`).expect(404);
+    await admin
+      .patch(`/admin/tasks/${taskId}`)
+      .send({ title: 'Changed' })
+      .expect(200);
+
+    const personalTask = await member
+      .post('/tasks')
+      .send({ title: 'Personal task', priority: 'MEDIUM' })
+      .expect(201);
+    expect(personalTask.body).toMatchObject({
+      userId: memberId,
+      createdById: memberId,
+      source: 'PERSONAL',
+      mentorPriority: false,
+    });
+    const personalTaskId = personalTask.body.id as string;
+    await member
+      .post('/tasks')
+      .send({ title: 'Invalid priority', mentorPriority: true })
+      .expect(400);
+    await member
+      .post('/tasks')
+      .send({
+        title: 'Spoofed ownership',
+        userId: strangerId,
+        source: 'PERSONAL',
+      })
+      .expect(400);
+    await member
+      .patch(`/tasks/${personalTaskId}`)
+      .send({ title: 'Updated personal task', priority: 'HIGH' })
+      .expect(200);
+    await admin
+      .patch(`/admin/tasks/${personalTaskId}`)
+      .send({ title: 'Forbidden' })
+      .expect(404);
+    await admin.delete(`/admin/tasks/${personalTaskId}`).expect(404);
+    await member.delete(`/tasks/${personalTaskId}`).expect(200);
 
     const checklistItemId = created.body.checklist[0].id as string;
     await member
@@ -125,6 +167,18 @@ describe('Professional development tasks (e2e)', () => {
       .post(`/tasks/${taskId}/notes`)
       .send({ content: 'My private planning note' })
       .expect(201);
+    await admin
+      .get(`/admin/users/${memberId}/tasks`)
+      .expect(200)
+      .expect((response) => {
+        const listedTask = response.body.items.find(
+          (task: { id: string }) => task.id === taskId,
+        );
+        expect(listedTask.source).toBe('MENTOR_ASSIGNED');
+        expect(JSON.stringify(response.body)).not.toContain(
+          'My private planning note',
+        );
+      });
     await admin.get(`/admin/tasks/${taskId}/feedback`).expect(200).expect([]);
     await admin
       .post(`/admin/tasks/${taskId}/feedback`)

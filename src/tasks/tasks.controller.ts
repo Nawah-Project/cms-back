@@ -21,11 +21,21 @@ import {
 import { TaskQueryDto } from './dto/task-query.dto';
 import { TasksService } from './tasks.service';
 import { FeedbackService } from '../feedback/feedback.service';
+import { CreateTaskDto } from './dto/create-task.dto';
+import { UpdateTaskDto } from './dto/update-task.dto';
 
 @Controller('tasks')
 @UseGuards(JwtAuthGuard)
 export class TasksController {
   constructor(private readonly tasks: TasksService) {}
+
+  @Post()
+  createPersonal(
+    @CurrentUser('id') userId: string,
+    @Body() dto: CreateTaskDto,
+  ) {
+    return this.tasks.createPersonal(userId, dto);
+  }
 
   @Get()
   findMine(@CurrentUser('id') userId: string, @Query() query: TaskQueryDto) {
@@ -43,6 +53,23 @@ export class TasksController {
     @Param('taskId', ParseUUIDPipe) taskId: string,
   ) {
     return this.tasks.findForMember(userId, taskId);
+  }
+
+  @Patch(':taskId')
+  updatePersonal(
+    @CurrentUser('id') userId: string,
+    @Param('taskId', ParseUUIDPipe) taskId: string,
+    @Body() dto: UpdateTaskDto,
+  ) {
+    return this.tasks.updatePersonal(userId, taskId, dto);
+  }
+
+  @Delete(':taskId')
+  deletePersonal(
+    @CurrentUser('id') userId: string,
+    @Param('taskId', ParseUUIDPipe) taskId: string,
+  ) {
+    return this.tasks.deletePersonal(userId, taskId);
   }
 
   @Patch(':taskId/status')

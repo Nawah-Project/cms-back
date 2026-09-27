@@ -8,6 +8,9 @@ import {
   ApplicationOutcome,
   ApplicationStage,
   Prisma,
+  TaskNoteType,
+  TaskSource,
+  TaskStatus,
   UserRole,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -385,6 +388,8 @@ export class AdminService {
       transitionStats,
       recentApplications,
       recentActivity,
+      taskCounts,
+      taskSourceCounts,
     ] = await Promise.all([
       this.prisma.user.findUnique({
         where: { id: userId },
@@ -430,6 +435,16 @@ export class AdminService {
         take: 10,
       }),
       this.queryActivity({ id: userId }, 10),
+      this.prisma.task.groupBy({
+        by: ['status'],
+        where: { userId },
+        _count: { _all: true },
+      }),
+      this.prisma.task.groupBy({
+        by: ['source'],
+        where: { userId },
+        _count: { _all: true },
+      }),
     ]);
     if (!user) throw new NotFoundException('User not found');
     const dates = [
@@ -451,6 +466,40 @@ export class AdminService {
       currentStageCounts[
         row.stage.toLowerCase() as keyof typeof currentStageCounts
       ] = row._count._all;
+    const taskStatusCounts = { TODO: 0, IN_PROGRESS: 0, BLOCKED: 0, DONE: 0 };
+    for (const row of taskCounts)
+      taskStatusCounts[row.status] = row._count._all;
+    const tasksBySource = { PERSONAL: 0, MENTOR_ASSIGNED: 0 };
+    for (const row of taskSourceCounts)
+      tasksBySource[row.source] = row._count._all;
+    const activeTasks =
+      taskStatusCounts.TODO +
+      taskStatusCounts.IN_PROGRESS +
+      taskStatusCounts.BLOCKED;
+    const [overdueTasks, mentorPriorityTasks, unreadMentorFeedback] =
+      await Promise.all([
+        this.prisma.task.count({
+          where: {
+            userId,
+            status: { not: TaskStatus.DONE },
+            dueDate: { lt: new Date() },
+          },
+        }),
+        this.prisma.task.count({
+          where: {
+            userId,
+            status: { not: TaskStatus.DONE },
+            mentorPriority: true,
+          },
+        }),
+        this.prisma.taskNote.count({
+          where: {
+            type: TaskNoteType.MENTOR_FEEDBACK,
+            readAt: null,
+            task: { userId },
+          },
+        }),
+      ]);
     return {
       user: {
         id: user.id,
@@ -475,6 +524,17 @@ export class AdminService {
             ? null
             : application.outcome,
       })),
+      development: {
+        totalActiveTasks: activeTasks,
+        taskStatusCounts,
+        overdueTasks,
+        mentorPriorityTasks,
+        tasksBySource: {
+          personal: tasksBySource[TaskSource.PERSONAL],
+          mentorAssigned: tasksBySource[TaskSource.MENTOR_ASSIGNED],
+        },
+        unreadMentorFeedback,
+      },
     };
   }
 

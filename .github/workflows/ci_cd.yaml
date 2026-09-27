@@ -85,7 +85,7 @@ jobs:
             --exclude='/private-storage/' \
             --exclude='/coverage/' \
             ./ /data/cms-development/backend/
-          docker compose --project-name cms-development-backend --env-file /data/cms-development/.env -f /data/cms-development/backend/compose.dev.yml config --format json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const u=new URL(JSON.parse(s).services.api.environment.DATABASE_URL);if(u.hostname!=="postgres"||u.pathname!=="/cms_development")process.exit(1)})'
+          docker compose --project-name cms-development-backend --env-file /data/cms-development/.env -f /data/cms-development/backend/compose.dev.yml config --format json | python3 -c 'import json,sys; from urllib.parse import urlsplit; u=urlsplit(json.load(sys.stdin)["services"]["api"]["environment"]["DATABASE_URL"]); sys.exit(0 if u.hostname == "postgres" and u.path == "/cms_development" else 1)'
           docker compose --project-name cms-development-backend --env-file /data/cms-development/.env -f /data/cms-development/backend/compose.dev.yml up -d --build postgres api
           for attempt in $(seq 1 45); do
             if curl --fail --silent http://127.0.0.1:3302/health; then

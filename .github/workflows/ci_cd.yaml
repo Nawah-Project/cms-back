@@ -87,8 +87,9 @@ jobs:
             ./ /data/cms-development/backend/
           docker compose --project-name cms-development-backend --env-file /data/cms-development/.env -f /data/cms-development/backend/compose.dev.yml config --format json | python3 -c 'import json,sys; from urllib.parse import urlsplit; u=urlsplit(json.load(sys.stdin)["services"]["api"]["environment"]["DATABASE_URL"]); sys.exit(0 if u.hostname == "postgres" and u.path == "/cms_development" else 1)'
           docker compose --project-name cms-development-backend --env-file /data/cms-development/.env -f /data/cms-development/backend/compose.dev.yml up -d --build postgres api
+          api_endpoint="$(docker compose --project-name cms-development-backend --env-file /data/cms-development/.env -f /data/cms-development/backend/compose.dev.yml port api 3000)"
           for attempt in $(seq 1 45); do
-            if curl --fail --silent http://127.0.0.1:3302/health; then
+            if curl --fail --silent "http://${api_endpoint}/health"; then
               echo
               exit 0
             fi

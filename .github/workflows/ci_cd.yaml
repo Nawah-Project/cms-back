@@ -1,0 +1,86 @@
+name: CI and production deploy
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cms-back-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Build and smoke test development stack
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate development Compose file
+        run: docker compose -f compose.dev.yml config --quiet
+
+      - name: Start isolated development stack
+        run: docker compose -f compose.dev.yml up -d --build
+
+      - name: Wait for API and database health
+        run: |
+          for attempt in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:3001/health; then
+              echo
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose -f compose.dev.yml logs api postgres
+          exit 1
+
+      - name: Stop CI stack
+        if: always()
+        run: docker compose -f compose.dev.yml down --remove-orphans
+
+  deploy-production:
+    name: Deploy API to production
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    concurrency:
+      group: cms-back-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          PROD_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          PROD_SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
+        run: |
+          test -n "$PROD_SSH_PRIVATE_KEY"
+          test -n "$PROD_SSH_KNOWN_HOSTS"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$PROD_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$PROD_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+
+      - name: Sync backend source and deploy API only
+        env:
+          PROD_SERVER_HOST: ${{ secrets.PROD_SERVER_HOST }}
+          PROD_SERVER_USER: ${{ secrets.PROD_SERVER_USER }}
+        run: |
+          test -n "$PROD_SERVER_HOST"
+          test -n "$PROD_SERVER_USER"
+          rsync -az --delete \
+            --exclude='/.env' \
+            --exclude='/.git/' \
+            --exclude='/node_modules/' \
+            --exclude='/dist/' \
+            --exclude='/private-storage/' \
+            --exclude='/coverage/' \
+            -e 'ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes' \
+            ./ "$PROD_SERVER_USER@$PROD_SERVER_HOST:/data/cms-back/"
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes \
+            "$PROD_SERVER_USER@$PROD_SERVER_HOST" \
+            'docker compose -f /data/cms-back/compose.yml up -d --build api && for attempt in $(seq 1 30); do curl --fail --silent http://127.0.0.1:3000/health && exit 0; sleep 2; done; docker compose -f /data/cms-back/compose.yml logs --tail=60 api; exit 1'

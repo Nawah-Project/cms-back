@@ -41,6 +41,30 @@ enum TaskNoteType {
   PERSONAL_NOTE
 }
 
+enum FeedbackVisibility {
+  DIRECT
+  GROUP
+  ALL
+}
+
+enum FeedbackContext {
+  APPLICATION
+  INTERVIEW
+  WAITING
+  DECISION
+  GENERAL
+}
+
+enum FeedbackTag {
+  INTERVIEW
+  CV
+  COMMUNICATION
+  TECHNICAL
+  APPLICATIONS
+  LEARNING
+  GENERAL
+}
+
 enum ApplicationMethod {
   COMPANY_WEBSITE
   LINKEDIN
@@ -78,6 +102,9 @@ model User {
   assignedTasks    Task[]                       @relation("TaskAssignee")
   createdTasks     Task[]                       @relation("TaskCreator")
   taskNotes        TaskNote[]                   @relation("TaskNoteAuthor")
+  authoredFeedback FeedbackPost[]               @relation("FeedbackAuthor")
+  targetedFeedback FeedbackPost[]               @relation("FeedbackTarget")
+  feedbackReads    FeedbackRead[]
 
   @@map("users")
 }
@@ -111,10 +138,11 @@ model AuthIdentity {
 }
 
 model Group {
-  id          String       @id @default(uuid()) @db.Uuid
-  name        String
-  createdAt   DateTime     @default(now())
-  memberships Membership[]
+  id            String         @id @default(uuid()) @db.Uuid
+  name          String
+  createdAt     DateTime       @default(now())
+  memberships   Membership[]
+  feedbackPosts FeedbackPost[]
 
   @@map("member_groups")
 }
@@ -219,6 +247,66 @@ model TaskNote {
   @@index([readAt], map: "IDX_task_notes_readAt")
   @@index([taskId, type, readAt], map: "IDX_task_notes_task_type_readAt")
   @@map("task_notes")
+}
+
+model FeedbackPost {
+  id           String             @id @default(uuid()) @db.Uuid
+  authorId     String             @db.Uuid
+  title        String             @db.VarChar(200)
+  content      String             @db.VarChar(20000)
+  visibility   FeedbackVisibility
+  groupId      String?            @db.Uuid
+  targetUserId String?            @db.Uuid
+  context      FeedbackContext    @default(GENERAL)
+  tags         FeedbackTag[]      @default([])
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  publishedAt  DateTime           @default(now())
+  archivedAt   DateTime?
+  author       User               @relation("FeedbackAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  group        Group?             @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  targetUser   User?              @relation("FeedbackTarget", fields: [targetUserId], references: [id], onDelete: Restrict)
+  resources    FeedbackResource[]
+  reads        FeedbackRead[]
+
+  @@index([authorId], map: "IDX_feedback_posts_authorId")
+  @@index([visibility], map: "IDX_feedback_posts_visibility")
+  @@index([groupId], map: "IDX_feedback_posts_groupId")
+  @@index([targetUserId], map: "IDX_feedback_posts_targetUserId")
+  @@index([publishedAt], map: "IDX_feedback_posts_publishedAt")
+  @@index([archivedAt], map: "IDX_feedback_posts_archivedAt")
+  @@index([visibility, archivedAt, publishedAt], map: "IDX_feedback_posts_feed")
+  @@index([groupId, archivedAt, publishedAt], map: "IDX_feedback_posts_group_feed")
+  @@index([targetUserId, archivedAt, publishedAt], map: "IDX_feedback_posts_direct_feed")
+  @@map("feedback_posts")
+}
+
+model FeedbackResource {
+  id          String       @id @default(uuid()) @db.Uuid
+  feedbackId  String       @db.Uuid
+  title       String       @db.VarChar(200)
+  url         String       @db.VarChar(2048)
+  type        String?      @db.VarChar(50)
+  description String?      @db.VarChar(1000)
+  createdAt   DateTime     @default(now())
+  feedback    FeedbackPost @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+
+  @@index([feedbackId], map: "IDX_feedback_resources_feedbackId")
+  @@map("feedback_resources")
+}
+
+model FeedbackRead {
+  id         String       @id @default(uuid()) @db.Uuid
+  feedbackId String       @db.Uuid
+  userId     String       @db.Uuid
+  readAt     DateTime     @default(now())
+  feedback   FeedbackPost @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([feedbackId, userId], map: "UQ_feedback_reads_feedback_user")
+  @@index([userId, readAt], map: "IDX_feedback_reads_user_readAt")
+  @@index([feedbackId], map: "IDX_feedback_reads_feedbackId")
+  @@map("feedback_reads")
 }
 
 model ApplicationStageTransition {

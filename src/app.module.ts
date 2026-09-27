@@ -12,6 +12,7 @@ import { ProfileModule } from './profile/profile.module';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { HealthController } from './health.controller';
 import { TasksModule } from './tasks/tasks.module';
+import { FeedbackModule } from './feedback/feedback.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { TasksModule } from './tasks/tasks.module';
     AdminModule,
     ProfileModule,
     TasksModule,
+    FeedbackModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

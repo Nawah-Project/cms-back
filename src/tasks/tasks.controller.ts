@@ -20,6 +20,7 @@ import {
 } from './dto/task-action.dto';
 import { TaskQueryDto } from './dto/task-query.dto';
 import { TasksService } from './tasks.service';
+import { FeedbackService } from '../feedback/feedback.service';
 
 @Controller('tasks')
 @UseGuards(JwtAuthGuard)
@@ -111,10 +112,16 @@ export class TasksController {
 @Controller('dashboard')
 @UseGuards(JwtAuthGuard)
 export class ProfessionalDevelopmentDashboardController {
-  constructor(private readonly tasks: TasksService) {}
+  constructor(
+    private readonly tasks: TasksService,
+    private readonly feedback: FeedbackService,
+  ) {}
 
   @Get('professional-development')
   getSummary(@CurrentUser('id') userId: string) {
-    return this.tasks.getDashboardSummary(userId);
+    return Promise.all([
+      this.tasks.getDashboardSummary(userId),
+      this.feedback.dashboardSummary(userId),
+    ]).then(([tasks, feedback]) => ({ ...tasks, feedback }));
   }
 }

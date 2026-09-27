@@ -6,9 +6,10 @@ import {
   TasksController,
 } from './tasks.controller';
 import { TasksService } from './tasks.service';
+import { FeedbackModule } from '../feedback/feedback.module';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, FeedbackModule],
   controllers: [
     TasksController,
     AdminTasksController,

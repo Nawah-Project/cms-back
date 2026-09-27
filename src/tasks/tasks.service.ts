@@ -534,8 +534,8 @@ export class TasksService {
     taskId: string,
     dto: CreateNoteDto,
   ) {
-    const task = await this.prisma.task.findFirst({
-      where: { id: taskId, source: TaskSource.MENTOR_ASSIGNED },
+    const task = await this.prisma.task.findUnique({
+      where: { id: taskId },
       select: { id: true },
     });
     if (!task) throw new NotFoundException('Task not found');
@@ -574,8 +574,8 @@ export class TasksService {
   }
 
   async listNotesForAdmin(taskId: string) {
-    const task = await this.prisma.task.findFirst({
-      where: { id: taskId, source: TaskSource.MENTOR_ASSIGNED },
+    const task = await this.prisma.task.findUnique({
+      where: { id: taskId },
       select: { id: true },
     });
     if (!task) throw new NotFoundException('Task not found');

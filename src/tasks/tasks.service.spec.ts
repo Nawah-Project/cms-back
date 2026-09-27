@@ -145,11 +145,15 @@ describe('TasksService', () => {
     expect(prisma.taskNote.updateMany).not.toHaveBeenCalled();
   });
 
-  it('creates feedback as a mentor note and does not mark it read', async () => {
-    prisma.task.findFirst.mockResolvedValue({ id: 'task-1' });
+  it('creates mentor feedback on a personal task and does not mark it read', async () => {
+    prisma.task.findUnique.mockResolvedValue({ id: 'task-1' });
     prisma.taskNote.create.mockResolvedValue({ id: 'feedback-1' });
     await service.addMentorFeedback('admin-1', 'task-1', {
       content: 'Please revise this section.',
+    });
+    expect(prisma.task.findUnique).toHaveBeenCalledWith({
+      where: { id: 'task-1' },
+      select: { id: true },
     });
     expect(prisma.taskNote.create).toHaveBeenCalledWith({
       data: {
@@ -158,6 +162,22 @@ describe('TasksService', () => {
         type: TaskNoteType.MENTOR_FEEDBACK,
         content: 'Please revise this section.',
       },
+    });
+  });
+
+  it('lists mentor feedback for any existing task, including personal tasks', async () => {
+    prisma.task.findUnique.mockResolvedValue({ id: 'personal-task' });
+    await service.listNotesForAdmin('personal-task');
+    expect(prisma.task.findUnique).toHaveBeenCalledWith({
+      where: { id: 'personal-task' },
+      select: { id: true },
+    });
+    expect(prisma.taskNote.findMany).toHaveBeenCalledWith({
+      where: {
+        taskId: 'personal-task',
+        type: TaskNoteType.MENTOR_FEEDBACK,
+      },
+      orderBy: { createdAt: 'desc' },
     });
   });
 

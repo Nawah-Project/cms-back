@@ -20,27 +20,82 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Configure ephemeral CI development environment
+        run: |
+          cat > .env.ci <<EOF
+          DEV_POSTGRES_USER=cms_ci
+          DEV_POSTGRES_PASSWORD=ci_only_${GITHUB_RUN_ID}
+          DEV_POSTGRES_DB=cms_ci
+          DEV_JWT_ACCESS_SECRET=ci_access_secret_not_production_${GITHUB_RUN_ID}
+          DEV_JWT_REFRESH_SECRET=ci_refresh_secret_not_production_${GITHUB_RUN_ID}
+          DEV_FRONTEND_ORIGIN=http://127.0.0.1:5174
+          DEV_API_HOST_PORT=3302
+          DEV_FRONTEND_HOST_PORT=5174
+          DEV_VITE_API_URL=http://127.0.0.1:3302
+          EOF
+
       - name: Validate development Compose file
-        run: docker compose -f compose.dev.yml config --quiet
+        run: docker compose --env-file .env.ci -p cms-ci-back -f compose.dev.yml config --quiet
 
       - name: Start isolated development stack
-        run: docker compose -f compose.dev.yml up -d --build
+        run: docker compose --env-file .env.ci -p cms-ci-back -f compose.dev.yml up -d --build
 
       - name: Wait for API and database health
         run: |
           for attempt in $(seq 1 45); do
-            if curl --fail --silent http://127.0.0.1:3001/health; then
+            if curl --fail --silent http://127.0.0.1:3302/health; then
               echo
               exit 0
             fi
             sleep 2
           done
-          docker compose -f compose.dev.yml logs api postgres
+          docker compose --env-file .env.ci -p cms-ci-back -f compose.dev.yml logs api postgres
           exit 1
 
       - name: Stop CI stack
         if: always()
-        run: docker compose -f compose.dev.yml down --remove-orphans
+        run: docker compose --env-file .env.ci -p cms-ci-back -f compose.dev.yml down --remove-orphans --volumes
+
+  deploy-development:
+    name: Deploy API to isolated development environment
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    needs: verify
+    runs-on: [self-hosted, linux, x64]
+    concurrency:
+      group: cms-back-development
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check development deployment access
+        run: |
+          test -w /data/cms-development
+          test -r /data/cms-development/.env
+          docker compose version
+          rsync --version
+
+      - name: Sync backend source and deploy development API only
+        run: |
+          rsync -az --delete \
+            --exclude='/.env' \
+            --exclude='/.env.*' \
+            --exclude='/.git/' \
+            --exclude='/node_modules/' \
+            --exclude='/dist/' \
+            --exclude='/private-storage/' \
+            --exclude='/coverage/' \
+            ./ /data/cms-development/backend/
+          docker compose --project-name cms-development-backend --env-file /data/cms-development/.env -f /data/cms-development/backend/compose.dev.yml config --format json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const u=new URL(JSON.parse(s).services.api.environment.DATABASE_URL);if(u.hostname!=="postgres"||u.pathname!=="/cms_development")process.exit(1)})'
+          docker compose --project-name cms-development-backend --env-file /data/cms-development/.env -f /data/cms-development/backend/compose.dev.yml up -d --build postgres api
+          for attempt in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:3302/health; then
+              echo
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose --project-name cms-development-backend --env-file /data/cms-development/.env -f /data/cms-development/backend/compose.dev.yml logs --tail=60 api postgres
+          exit 1
 
   deploy-production:
     name: Deploy API to production

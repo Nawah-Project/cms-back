@@ -1,36 +1,33 @@
-name: cms-back-dev
+name: cms-development-backend
 
 services:
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_USER: cms_dev
-      POSTGRES_PASSWORD: cms_dev_local_only
-      POSTGRES_DB: cms_dev
-    ports:
-      - "127.0.0.1:${DEV_POSTGRES_HOST_PORT:-5433}:5432"
+      POSTGRES_USER: ${DEV_POSTGRES_USER:?Set DEV_POSTGRES_USER in development .env}
+      POSTGRES_PASSWORD: ${DEV_POSTGRES_PASSWORD:?Set DEV_POSTGRES_PASSWORD in development .env}
+      POSTGRES_DB: ${DEV_POSTGRES_DB:?Set DEV_POSTGRES_DB in development .env}
     volumes:
-      - cms-back-dev-postgres-data:/var/lib/postgresql/data
+      - cms-development-postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
       timeout: 3s
       retries: 20
       start_period: 10s
+    mem_limit: 512m
 
   api:
     build:
       context: .
       dockerfile: Dockerfile
-      target: build
-    command: ["sh", "-c", "npm run prisma:migrate:deploy && npm run start:dev"]
     environment:
       NODE_ENV: development
       PORT: 3000
-      DATABASE_URL: ${DEV_DATABASE_URL:-postgresql://cms_dev:cms_dev_local_only@postgres:5432/cms_dev?schema=public}
-      JWT_ACCESS_SECRET: ${DEV_JWT_ACCESS_SECRET:-local-development-only-access-secret}
-      JWT_REFRESH_SECRET: ${DEV_JWT_REFRESH_SECRET:-local-development-only-refresh-secret}
-      FRONTEND_ORIGIN: ${DEV_FRONTEND_ORIGIN:-http://localhost:5173}
+      DATABASE_URL: postgresql://${DEV_POSTGRES_USER:?Set DEV_POSTGRES_USER in development .env}:${DEV_POSTGRES_PASSWORD:?Set DEV_POSTGRES_PASSWORD in development .env}@postgres:5432/${DEV_POSTGRES_DB:?Set DEV_POSTGRES_DB in development .env}?schema=public
+      JWT_ACCESS_SECRET: ${DEV_JWT_ACCESS_SECRET:?Set DEV_JWT_ACCESS_SECRET in development .env}
+      JWT_REFRESH_SECRET: ${DEV_JWT_REFRESH_SECRET:?Set DEV_JWT_REFRESH_SECRET in development .env}
+      FRONTEND_ORIGIN: ${DEV_FRONTEND_ORIGIN:?Set DEV_FRONTEND_ORIGIN in development .env}
       AUTH_COOKIE_SAME_SITE: lax
       COOKIE_SECURE: "false"
       TRUST_PROXY: "0"
@@ -39,11 +36,9 @@ services:
       CV_STORAGE_DIR: /app/private-storage/cvs
       CV_MAX_FILE_SIZE_BYTES: ${DEV_CV_MAX_FILE_SIZE_BYTES:-5242880}
     ports:
-      - "127.0.0.1:${DEV_BACKEND_HOST_PORT:-3001}:3000"
+      - "127.0.0.1:${DEV_API_HOST_PORT:?Set DEV_API_HOST_PORT in development .env}:3000"
     volumes:
-      - ./src:/app/src
-      - ./prisma:/app/prisma
-      - cms-back-dev-cv-storage:/app/private-storage/cvs
+      - cms-development-cv-storage:/app/private-storage/cvs
     depends_on:
       postgres:
         condition: service_healthy
@@ -57,7 +52,8 @@ services:
       timeout: 4s
       retries: 6
       start_period: 30s
+    mem_limit: 1g
 
 volumes:
-  cms-back-dev-postgres-data:
-  cms-back-dev-cv-storage:
+  cms-development-postgres-data:
+  cms-development-cv-storage:

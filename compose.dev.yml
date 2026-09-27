@@ -36,7 +36,7 @@ services:
       CV_STORAGE_DIR: /app/private-storage/cvs
       CV_MAX_FILE_SIZE_BYTES: ${DEV_CV_MAX_FILE_SIZE_BYTES:-5242880}
     ports:
-      - "127.0.0.1:${DEV_API_HOST_PORT:?Set DEV_API_HOST_PORT in development .env}:3000"
+      - "${DEV_BIND_ADDRESS:-127.0.0.1}:${DEV_API_HOST_PORT:?Set DEV_API_HOST_PORT in development .env}:3000"
     volumes:
       - cms-development-cv-storage:/app/private-storage/cvs
     depends_on:

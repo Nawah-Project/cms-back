@@ -34,18 +34,13 @@ and uploaded files.
 - A push to `main` deploys only the changed repository's service through the
   existing production Compose file: `api` for this repository, `frontend` for
   `cms-front`.
-- The workflow syncs source files over SSH. It excludes the server `.env`, Git
+- Deployment runs on the production server's self-hosted Actions runner. It
+  syncs the checked-out source locally and excludes the server `.env`, Git
   metadata, build outputs, and mounted private storage. It never runs Compose
   `down` and never removes named volumes.
 
-Before merging a deploying commit to `main`, add these GitHub Actions repository
-secrets in **both** the `cms-back` and `cms-front` repositories:
-
-- `PROD_SERVER_HOST`: production server hostname or address reachable by GitHub Actions.
-- `PROD_SERVER_USER`: SSH account allowed to use Docker (currently `marshall`).
-- `PROD_SSH_PRIVATE_KEY`: dedicated private key; install its public key for that server account.
-- `PROD_SSH_KNOWN_HOSTS`: verified SSH host-key line for the server.
-
-The workflows expect SSH on port 22. If the server cannot accept SSH connections
-from GitHub-hosted runners, configure a self-hosted runner or another secure
-deployment path before enabling production merges.
+Register an online self-hosted Linux x64 Actions runner for **both** repositories
+or for their GitHub organization. The runner account must be able to write to
+`/data/cms-back` and `/data/cms-front`, run Docker Compose, and use `rsync`.
+CI validation runs on GitHub-hosted runners; only the deploy job is assigned to
+the production server runner.

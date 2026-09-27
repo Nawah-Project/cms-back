@@ -46,32 +46,21 @@ jobs:
     name: Deploy API to production
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64]
     concurrency:
       group: cms-back-production
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure SSH
-        env:
-          PROD_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
-          PROD_SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
+      - name: Check production runner access
         run: |
-          test -n "$PROD_SSH_PRIVATE_KEY"
-          test -n "$PROD_SSH_KNOWN_HOSTS"
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$PROD_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
-          printf '%s\n' "$PROD_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+          test -w /data/cms-back
+          docker compose version
+          rsync --version
 
       - name: Sync backend source and deploy API only
-        env:
-          PROD_SERVER_HOST: ${{ secrets.PROD_SERVER_HOST }}
-          PROD_SERVER_USER: ${{ secrets.PROD_SERVER_USER }}
         run: |
-          test -n "$PROD_SERVER_HOST"
-          test -n "$PROD_SERVER_USER"
           rsync -az --delete \
             --exclude='/.env' \
             --exclude='/.git/' \
@@ -79,8 +68,14 @@ jobs:
             --exclude='/dist/' \
             --exclude='/private-storage/' \
             --exclude='/coverage/' \
-            -e 'ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes' \
-            ./ "$PROD_SERVER_USER@$PROD_SERVER_HOST:/data/cms-back/"
-          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes \
-            "$PROD_SERVER_USER@$PROD_SERVER_HOST" \
-            'docker compose -f /data/cms-back/compose.yml up -d --build api && for attempt in $(seq 1 30); do curl --fail --silent http://127.0.0.1:3000/health && exit 0; sleep 2; done; docker compose -f /data/cms-back/compose.yml logs --tail=60 api; exit 1'
+            ./ /data/cms-back/
+          docker compose -f /data/cms-back/compose.yml up -d --build api
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3000/health; then
+              echo
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose -f /data/cms-back/compose.yml logs --tail=60 api
+          exit 1

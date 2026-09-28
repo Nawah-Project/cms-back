@@ -134,11 +134,20 @@ export class ProfileService
     };
   }
 
-  async updateProfile(userId: string, portfolioUrl?: string | null) {
-    if (portfolioUrl !== undefined) {
+  async updateProfile(
+    userId: string,
+    portfolioUrl?: string | null,
+    name?: string,
+  ) {
+    if (portfolioUrl !== undefined || name !== undefined) {
+      const data: Prisma.UserUpdateInput = {};
+      if (portfolioUrl !== undefined) {
+        data.portfolioUrl = portfolioUrl?.trim() || null;
+      }
+      if (name !== undefined) data.name = name.trim();
       await this.prisma.user.update({
         where: { id: userId },
-        data: { portfolioUrl: portfolioUrl?.trim() || null },
+        data,
         select: { id: true },
       });
     }

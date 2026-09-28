@@ -39,7 +39,7 @@ export class ProfileController {
     @CurrentUser('id') userId: string,
     @Body() body: UpdateProfileDto,
   ) {
-    return this.profile.updateProfile(userId, body.portfolioUrl);
+    return this.profile.updateProfile(userId, body.portfolioUrl, body.name);
   }
 
   @Post('profile/cv')

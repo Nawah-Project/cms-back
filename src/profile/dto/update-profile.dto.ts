@@ -1,7 +1,24 @@
 import { Transform } from 'class-transformer';
-import { IsOptional, IsString, IsUrl, MaxLength } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  IsUrl,
+  Matches,
+  MaxLength,
+} from 'class-validator';
 
 export class UpdateProfileDto {
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  @Matches(/\S/, { message: 'name must not be blank' })
+  name?: string;
+
   @Transform(({ value }) =>
     typeof value === 'string' && value.trim() === '' ? null : value,
   )

@@ -21,6 +21,7 @@ export interface MemberProgress {
   avatar: string | null;
   portfolioUrl: string | null;
   hasCv: boolean;
+  hasAcceptedApplication: boolean;
   isCurrentUser: boolean;
   lastUpdatedAt: string | null;
   counts: {
@@ -78,6 +79,7 @@ export class MembersService {
       groupedCounts,
       applicationActivity,
       transitionActivity,
+      acceptedApplications,
     ] = await Promise.all([
       this.prisma.membership.findMany({
         where: { userId: { in: memberIds } },
@@ -106,6 +108,15 @@ export class MembersService {
         by: ['userId'],
         where: { userId: { in: memberIds } },
         _max: { changedAt: true },
+      }),
+      this.prisma.application.groupBy({
+        by: ['userId'],
+        where: {
+          userId: { in: memberIds },
+          stage: ApplicationStage.CLOSED,
+          outcome: ApplicationOutcome.ACCEPTED,
+        },
+        _count: { _all: true },
       }),
     ]);
 
@@ -141,6 +152,9 @@ export class MembersService {
     const profileByUser = new Map(
       memberships.map(({ userId, user }) => [userId, user]),
     );
+    const usersWithAcceptedApplications = new Set(
+      acceptedApplications.map(({ userId }) => userId),
+    );
 
     return memberIds
       .map((userId) => ({
@@ -150,6 +164,7 @@ export class MembersService {
         avatar: null,
         portfolioUrl: profileByUser.get(userId)?.portfolioUrl ?? null,
         hasCv: Boolean(profileByUser.get(userId)?.cv),
+        hasAcceptedApplication: usersWithAcceptedApplications.has(userId),
         isCurrentUser: userId === currentUserId,
         lastUpdatedAt: latestByUser.get(userId)?.toISOString() ?? null,
         counts: countsByUser.get(userId)!,

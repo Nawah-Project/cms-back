@@ -37,6 +37,15 @@ export class AdminTasksController {
     return this.tasks.createForMember(userId, adminId, dto);
   }
 
+  @Post('groups/:groupId/tasks')
+  createForGroup(
+    @CurrentUser('id') adminId: string,
+    @Param('groupId', ParseUUIDPipe) groupId: string,
+    @Body() dto: CreateTaskDto,
+  ) {
+    return this.tasks.createForGroup(groupId, adminId, dto);
+  }
+
   @Get('users/:userId/tasks')
   list(
     @Param('userId', ParseUUIDPipe) userId: string,

@@ -221,6 +221,61 @@ export class TasksService {
     return this.present(task);
   }
 
+  async createForGroup(
+    groupId: string,
+    createdById: string,
+    dto: CreateTaskDto,
+  ) {
+    this.validateDates(dto.startDate, dto.dueDate);
+    return this.prisma.$transaction(async (tx) => {
+      const group = await tx.group.findUnique({
+        where: { id: groupId },
+        select: {
+          id: true,
+          name: true,
+          memberships: {
+            where: { user: { role: UserRole.USER } },
+            select: { userId: true },
+          },
+        },
+      });
+      if (!group) throw new NotFoundException('Group not found');
+      if (!group.memberships.length)
+        throw new BadRequestException('Group has no members');
+
+      const created = await Promise.all(
+        group.memberships.map(({ userId }) =>
+          tx.task.create({
+            data: {
+              userId,
+              createdById,
+              source: TaskSource.MENTOR_ASSIGNED,
+              title: dto.title.trim(),
+              description: dto.description?.trim() || null,
+              priority: dto.priority,
+              mentorPriority: dto.mentorPriority ?? false,
+              startDate: dto.startDate ? new Date(dto.startDate) : null,
+              dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+              checklist: dto.checklist?.length
+                ? {
+                    create: dto.checklist.map((item, position) => ({
+                      title: item.title.trim(),
+                      position,
+                    })),
+                  }
+                : undefined,
+            },
+          }),
+        ),
+      );
+      return {
+        groupId: group.id,
+        groupName: group.name,
+        assignedCount: created.length,
+      };
+    });
+  }
+
   async findMine(userId: string, page = 1, requestedLimit = 20) {
     const limit = Math.min(50, Math.max(1, Math.floor(requestedLimit) || 20));
     const safePage = Math.max(1, Math.floor(page) || 1);

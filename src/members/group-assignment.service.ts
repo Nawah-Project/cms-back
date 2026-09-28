@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -6,24 +6,8 @@ export const MAX_GROUP_SIZE = 10;
 const REGISTRATION_LOCK_KEY = 684_206_731_104;
 
 @Injectable()
-export class GroupAssignmentService implements OnApplicationBootstrap {
-  private readonly logger = new Logger(GroupAssignmentService.name);
-
+export class GroupAssignmentService {
   constructor(private readonly prisma: PrismaService) {}
-
-  async onApplicationBootstrap(): Promise<void> {
-    await this.withAssignmentLock(async (transaction) => {
-      const users = await transaction.user.findMany({
-        where: { membership: null },
-        select: { id: true },
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      });
-      for (const user of users) await this.assignUser(transaction, user.id);
-      if (users.length) {
-        this.logger.log(`Assigned ${users.length} existing user(s) to groups`);
-      }
-    });
-  }
 
   async withAssignmentLock<T>(
     operation: (transaction: Prisma.TransactionClient) => Promise<T>,
@@ -51,6 +35,8 @@ export class GroupAssignmentService implements OnApplicationBootstrap {
     `;
   }
 
+  // Call only during new-account onboarding or an explicit admin assignment.
+  // A missing membership can mean an admin deliberately removed the user.
   async assignUser(
     transaction: Prisma.TransactionClient | PrismaClient,
     userId: string,

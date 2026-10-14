@@ -148,5 +148,4 @@ describe('SocialAuthService', () => {
     ).rejects.toThrow('Provider identity is invalid');
     expect(auth.signInWithProvider).not.toHaveBeenCalled();
   });
-
 });

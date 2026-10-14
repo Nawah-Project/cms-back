@@ -29,6 +29,8 @@ export interface DashboardStats {
     withdrawn: number;
     noResponse: number;
   };
+  expiringSoonCount: number;
+  recentNoResponseCount: number;
   recentApplications: Array<
     Pick<
       DbApplication,
@@ -46,6 +48,7 @@ export interface DashboardStats {
 export interface PaginatedApplications {
   data: DbApplication[];
   total: number;
+  unfilteredTotal: number;
   page: number;
   limit: number;
   totalPages: number;
@@ -123,7 +126,11 @@ export class ApplicationsService {
     const search = query.search?.trim();
     const where: Prisma.ApplicationWhereInput = {
       userId,
-      ...(query.stage ? { stage: query.stage } : {}),
+      ...(query.stage
+        ? query.stage === 'ACTIVE'
+          ? { stage: { not: ApplicationStage.CLOSED } }
+          : { stage: query.stage }
+        : {}),
       ...(query.outcome ? { outcome: query.outcome } : {}),
       ...(search
         ? {
@@ -134,7 +141,7 @@ export class ApplicationsService {
           }
         : {}),
     };
-    const [data, total] = await this.prisma.$transaction([
+    const [data, total, unfilteredTotal] = await this.prisma.$transaction([
       this.prisma.application.findMany({
         where,
         orderBy: [{ applicationDate: sortOrder }, { createdAt: 'desc' }],
@@ -142,8 +149,16 @@ export class ApplicationsService {
         take: limit,
       }),
       this.prisma.application.count({ where }),
+      this.prisma.application.count({ where: { userId } }),
     ]);
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+    return {
+      data,
+      total,
+      unfilteredTotal,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async findOne(userId: string, id: string): Promise<DbApplication> {
@@ -160,17 +175,21 @@ export class ApplicationsService {
     id: string,
     updateDto: UpdateApplicationDto,
   ): Promise<DbApplication> {
-    if (updateDto.outcome === ApplicationOutcome.NO_RESPONSE) {
-      throw new BadRequestException(
-        'NO_RESPONSE is assigned automatically after seven days without a response',
-      );
-    }
     return this.prisma.$transaction(async (transaction) => {
       const application = await transaction.application.findFirst({
         where: { id, userId },
       });
       if (!application)
         throw new NotFoundException(`Application with ID "${id}" not found`);
+      if (
+        updateDto.outcome === ApplicationOutcome.NO_RESPONSE &&
+        (application.outcome as unknown as ApplicationOutcome) !==
+          ApplicationOutcome.NO_RESPONSE
+      ) {
+        throw new BadRequestException(
+          'NO_RESPONSE is assigned automatically after seven days without a response',
+        );
+      }
       const previousStage = application.stage;
       const nextStage = (updateDto.stage ??
         application.stage) as ApplicationStage;
@@ -222,9 +241,18 @@ export class ApplicationsService {
         const jobUrl = updateDto.jobUrl?.trim() || null;
         if (jobUrl !== application.jobUrl) data.jobUrl = jobUrl;
       }
-      if (nextStage !== application.stage) data.stage = nextStage;
-      if (nextOutcome !== application.outcome) data.outcome = nextOutcome;
-      if (nextStage !== application.stage) {
+      if (
+        (nextStage as unknown as DbApplication['stage']) !== application.stage
+      )
+        data.stage = nextStage;
+      if (
+        (nextOutcome as unknown as DbApplication['outcome']) !==
+        application.outcome
+      )
+        data.outcome = nextOutcome;
+      if (
+        (nextStage as unknown as DbApplication['stage']) !== application.stage
+      ) {
         data.closedAt =
           nextStage === ApplicationStage.CLOSED ? new Date() : null;
       }
@@ -264,7 +292,16 @@ export class ApplicationsService {
   }
 
   async getDashboard(userId: string): Promise<DashboardStats> {
-    const [groups, recentApplications] = await Promise.all([
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const fourDaysAgo = new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000);
+
+    const [
+      groups,
+      recentApplications,
+      expiringSoonCount,
+      recentNoResponseCount,
+    ] = await Promise.all([
       this.prisma.application.groupBy({
         by: ['stage', 'outcome'],
         where: { userId },
@@ -283,6 +320,24 @@ export class ApplicationsService {
         },
         orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
         take: 4,
+      }),
+      this.prisma.application.count({
+        where: {
+          userId,
+          stage: { not: ApplicationStage.CLOSED },
+          updatedAt: {
+            gte: sevenDaysAgo,
+            lte: fourDaysAgo,
+          },
+        },
+      }),
+      this.prisma.application.count({
+        where: {
+          userId,
+          stage: ApplicationStage.CLOSED,
+          outcome: ApplicationOutcome.NO_RESPONSE,
+          closedAt: { gte: sevenDaysAgo },
+        },
       }),
     ]);
     let applied = 0,
@@ -318,6 +373,8 @@ export class ApplicationsService {
         withdrawn,
         noResponse,
       },
+      expiringSoonCount,
+      recentNoResponseCount,
       recentApplications,
     };
   }

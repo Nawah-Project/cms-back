@@ -28,8 +28,8 @@ export class ApplicationQueryDto {
   limit?: number = 20;
 
   @IsOptional()
-  @IsEnum(ApplicationStage)
-  stage?: ApplicationStage;
+  @IsIn([...Object.values(ApplicationStage), 'ACTIVE'])
+  stage?: ApplicationStage | 'ACTIVE';
 
   @IsOptional()
   @IsEnum(ApplicationOutcome)

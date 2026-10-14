@@ -63,4 +63,9 @@ export class AdminController {
   getUserDetail(@Param('userId', new ParseUUIDPipe()) userId: string) {
     return this.admin.getUserDetail(userId);
   }
+
+  @Get('monitoring/ux-analytics')
+  getUxAnalytics() {
+    return this.admin.getUxAnalytics();
+  }
 }

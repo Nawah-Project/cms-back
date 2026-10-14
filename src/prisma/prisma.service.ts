@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
 @Injectable()
@@ -12,7 +17,9 @@ export class PrismaService
     try {
       await this.$connect();
     } catch {
-      this.logger.error('Unable to connect to the configured PostgreSQL database');
+      this.logger.error(
+        'Unable to connect to the configured PostgreSQL database',
+      );
       throw new Error('Database connection failed during startup');
     }
   }

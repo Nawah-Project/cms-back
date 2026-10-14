@@ -8,13 +8,14 @@ import {
 import type { TokenPair } from './auth.service';
 
 function cookieOptions() {
-  const sameSite = (process.env.AUTH_COOKIE_SAME_SITE || 'lax').toLowerCase() as
-    | 'strict'
-    | 'lax'
-    | 'none';
+  const sameSite = (
+    process.env.AUTH_COOKIE_SAME_SITE || 'lax'
+  ).toLowerCase() as 'strict' | 'lax' | 'none';
   return {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production' || process.env.COOKIE_SECURE === 'true',
+    secure:
+      process.env.NODE_ENV === 'production' ||
+      process.env.COOKIE_SECURE === 'true',
     sameSite,
     path: '/',
   } as const;

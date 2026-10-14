@@ -1,3 +1,5 @@
+name: nawah-production
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -14,7 +16,7 @@ services:
     networks:
       - nawah
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\"" ]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -71,6 +73,11 @@ services:
         VITE_API_URL: ${VITE_API_URL:?Set VITE_API_URL to the public backend URL}
     container_name: cms-front
     restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      VITE_API_URL: ${VITE_API_URL:?Set VITE_API_URL to the public backend URL}
+      VITE_CV_MAX_FILE_SIZE_BYTES: ${CV_MAX_FILE_SIZE_BYTES:-5242880}
     ports:
       - "127.0.0.1:${FRONTEND_HOST_PORT:-8081}:3000"
     depends_on:
@@ -78,6 +85,16 @@ services:
         condition: service_healthy
     networks:
       - nawah
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 4s
+      retries: 5
+      start_period: 20s
 
 volumes:
   cms-postgres-data:
@@ -85,4 +102,5 @@ volumes:
 
 networks:
   nawah:
-    external: true
+    name: nawah
+    driver: bridge

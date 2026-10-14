@@ -98,7 +98,10 @@ export class SocialAuthService {
       throw new Error('Provider did not return an identity token');
     }
 
-    const claims = await this.verifyIdentityToken(tokenResponse.id_token, clientId);
+    const claims = await this.verifyIdentityToken(
+      tokenResponse.id_token,
+      clientId,
+    );
     if (
       !this.constantTimeEqual(claims.nonce ?? '', expectedNonce) ||
       !claims.sub ||
@@ -175,9 +178,12 @@ export class SocialAuthService {
         throw new Error('Provider signing key request limit reached');
       }
       window.requests += 1;
-      const response = await fetch('https://www.googleapis.com/oauth2/v3/certs', {
-        signal: AbortSignal.timeout(10_000),
-      });
+      const response = await fetch(
+        'https://www.googleapis.com/oauth2/v3/certs',
+        {
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
       if (!response.ok) throw new Error('Unable to load provider signing keys');
       const body = (await response.json()) as { keys?: unknown };
       if (!Array.isArray(body.keys)) {

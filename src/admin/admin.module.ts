@@ -6,9 +6,10 @@ import { AdminGuard } from './admin.guard';
 import { AdminService } from './admin.service';
 import { UxAnalyticsController } from './ux-analytics.controller';
 import { UxAnalyticsService } from './ux-analytics.service';
+import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
-  imports: [AuthModule, GroupsModule],
+  imports: [AuthModule, GroupsModule, PrismaModule],
   controllers: [AdminController, UxAnalyticsController],
   providers: [AdminGuard, AdminService, UxAnalyticsService],
   exports: [UxAnalyticsService],

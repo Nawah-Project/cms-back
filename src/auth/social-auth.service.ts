@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { AuthProvider } from '@prisma/client';
 import { createPublicKey, randomBytes, timingSafeEqual } from 'node:crypto';
 import jwt from 'jsonwebtoken';
+import { recordExternalDependency } from '../observability/metrics.registry';
 import { AuthService, type PublicUser, type TokenPair } from './auth.service';
 
 export type SocialProvider = 'google';
@@ -80,7 +81,7 @@ export class SocialAuthService {
     if (!expectedNonce) throw new Error('Invalid social login response');
 
     const clientId = this.requiredEnv('GOOGLE_CLIENT_ID');
-    const response = await fetch('https://oauth2.googleapis.com/token', {
+    const response = await this.fetchGoogle('token_exchange', 'https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
@@ -117,6 +118,22 @@ export class SocialAuthService {
       providerEmail: claims.email,
       name: claims.name,
     });
+  }
+
+  private async fetchGoogle(
+    operation: 'token_exchange' | 'jwks',
+    url: string,
+    init: RequestInit,
+  ): Promise<Response> {
+    const startedAt = process.hrtime.bigint();
+    try {
+      const response = await fetch(url, init);
+      recordExternalDependency(operation, response.ok ? 'success' : 'http_error', Number(process.hrtime.bigint() - startedAt) / 1e9);
+      return response;
+    } catch (error) {
+      recordExternalDependency(operation, 'network_error', Number(process.hrtime.bigint() - startedAt) / 1e9);
+      throw error;
+    }
   }
 
   private async verifyIdentityToken(
@@ -178,7 +195,7 @@ export class SocialAuthService {
         throw new Error('Provider signing key request limit reached');
       }
       window.requests += 1;
-      const response = await fetch(
+      const response = await this.fetchGoogle('jwks',
         'https://www.googleapis.com/oauth2/v3/certs',
         {
           signal: AbortSignal.timeout(10_000),

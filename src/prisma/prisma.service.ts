@@ -5,6 +5,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { databaseQueryDuration } from '../observability/metrics.registry';
 
 @Injectable()
 export class PrismaService
@@ -12,6 +13,14 @@ export class PrismaService
   implements OnModuleInit, OnModuleDestroy
 {
   private readonly logger = new Logger(PrismaService.name);
+
+  constructor() {
+    super({ log: [{ emit: 'event', level: 'query' }] });
+    const queryEvents = this as unknown as {
+      $on: (event: 'query', handler: (value: { duration: number }) => void) => void;
+    };
+    queryEvents.$on('query', (event) => databaseQueryDuration.observe(event.duration / 1000));
+  }
 
   async onModuleInit(): Promise<void> {
     try {

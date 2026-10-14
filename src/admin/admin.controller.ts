@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   ParseUUIDPipe,
   Query,
@@ -17,6 +18,7 @@ import {
   MonitoringActivityQueryDto,
   MonitoringQueryDto,
 } from './dto/monitoring-query.dto';
+import { UpdateUxConfigDto } from './dto/track-ux-event.dto';
 
 @Controller('admin')
 @UseGuards(JwtAuthGuard, AdminGuard)
@@ -67,5 +69,10 @@ export class AdminController {
   @Get('monitoring/ux-analytics')
   getUxAnalytics() {
     return this.admin.getUxAnalytics();
+  }
+
+  @Patch('monitoring/ux-config')
+  updateUxConfig(@Body() dto: UpdateUxConfigDto) {
+    return this.admin.updateUxConfig(dto);
   }
 }

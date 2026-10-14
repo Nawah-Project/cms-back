@@ -27,7 +27,10 @@ import {
 import { ActivityState, getActivityState } from './activity-status.util';
 import { MonitoringQueryDto } from './dto/monitoring-query.dto';
 import { UxAnalyticsService } from './ux-analytics.service';
-import { TrackUxEventDto } from './dto/track-ux-event.dto';
+import {
+  TrackUxEventDto,
+  UpdateUxConfigDto,
+} from './dto/track-ux-event.dto';
 
 type ActivityItem = {
   id: string;
@@ -72,7 +75,7 @@ export class AdminService {
       FROM application_stage_transitions GROUP BY "userId"
     ), task_activity AS (
       SELECT "userId", MAX("updatedAt") AS last_at
-      FROM tasks GROUP BY "userId"
+      FROM professional_tasks GROUP BY "userId"
     ), latest_activity AS (
       SELECT u.id, u.name, u.role, m."groupId", g.name AS "groupName",
         GREATEST(a.last_at, t.last_at, tk.last_at) AS last_at
@@ -170,7 +173,7 @@ export class AdminService {
           COUNT(*) FILTER (WHERE status = 'IN_PROGRESS'::"TaskStatus")::int AS "inProgressTasks",
           COUNT(*) FILTER (WHERE status <> 'DONE'::"TaskStatus" AND "dueDate" < CURRENT_TIMESTAMP)::int AS "overdueTasks",
           MAX("updatedAt") AS "lastTaskAt"
-        FROM tasks GROUP BY "userId"
+        FROM professional_tasks GROUP BY "userId"
       )
       SELECT c.id, c.name, c.role, c."groupId", c."groupName",
         c.last_at AS "lastActivityAt", c.inactivity_days AS "inactivityDays",
@@ -650,6 +653,10 @@ export class AdminService {
 
   getUxAnalytics() {
     return this.uxAnalytics.getAnalytics();
+  }
+
+  updateUxConfig(dto: UpdateUxConfigDto) {
+    return this.uxAnalytics.updateConfig(dto);
   }
 
   recordUxEvent(userId: string, dto: TrackUxEventDto) {

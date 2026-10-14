@@ -116,7 +116,7 @@ export class AdminService {
     >(Prisma.sql`${this.userActivityCte()}
       SELECT COUNT(*)::int AS "usersCount",
         (SELECT COUNT(*)::int FROM member_groups) AS "groupsCount",
-        (SELECT COUNT(*)::int FROM memberships) AS "membershipsCount",
+        COUNT(*) FILTER (WHERE "groupId" IS NOT NULL)::int AS "membershipsCount",
         COUNT(*) FILTER (WHERE "groupId" IS NULL)::int AS "unassignedUsersCount",
         COUNT(*) FILTER (WHERE activity_status = 'ACTIVE')::int AS "activeUsersCount",
         COUNT(*) FILTER (WHERE activity_status = 'WARNING')::int AS "warningUsersCount",

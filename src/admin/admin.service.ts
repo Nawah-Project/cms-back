@@ -26,6 +26,11 @@ import {
 } from './admin.constants';
 import { ActivityState, getActivityState } from './activity-status.util';
 import { MonitoringQueryDto } from './dto/monitoring-query.dto';
+import { UxAnalyticsService } from './ux-analytics.service';
+import {
+  TrackUxEventDto,
+  UpdateUxConfigDto,
+} from './dto/track-ux-event.dto';
 
 type ActivityItem = {
   id: string;
@@ -47,6 +52,7 @@ export class AdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly groupAssignment: GroupAssignmentService,
+    private readonly uxAnalytics: UxAnalyticsService,
   ) {}
 
   private boundedLimit(value?: number): number {
@@ -67,14 +73,19 @@ export class AdminService {
     ), transition_activity AS (
       SELECT "userId", MAX("changedAt") AS last_at
       FROM application_stage_transitions GROUP BY "userId"
+    ), task_activity AS (
+      SELECT "userId", MAX("updatedAt") AS last_at
+      FROM professional_tasks GROUP BY "userId"
     ), latest_activity AS (
       SELECT u.id, u.name, u.role, m."groupId", g.name AS "groupName",
-        COALESCE(GREATEST(a.last_at, t.last_at), a.last_at, t.last_at) AS last_at
+        GREATEST(a.last_at, t.last_at, tk.last_at) AS last_at
       FROM users u
       LEFT JOIN memberships m ON m."userId" = u.id
       LEFT JOIN member_groups g ON g.id = m."groupId"
       LEFT JOIN application_activity a ON a."userId" = u.id
       LEFT JOIN transition_activity t ON t."userId" = u.id
+      LEFT JOIN task_activity tk ON tk."userId" = u.id
+      WHERE u.role = 'USER'::"UserRole"
     ), activity_age AS (
       SELECT *,
         CASE WHEN last_at IS NULL THEN NULL
@@ -108,7 +119,7 @@ export class AdminService {
     >(Prisma.sql`${this.userActivityCte()}
       SELECT COUNT(*)::int AS "usersCount",
         (SELECT COUNT(*)::int FROM member_groups) AS "groupsCount",
-        (SELECT COUNT(*)::int FROM memberships) AS "membershipsCount",
+        COUNT(*) FILTER (WHERE "groupId" IS NOT NULL)::int AS "membershipsCount",
         COUNT(*) FILTER (WHERE "groupId" IS NULL)::int AS "unassignedUsersCount",
         COUNT(*) FILTER (WHERE activity_status = 'ACTIVE')::int AS "activeUsersCount",
         COUNT(*) FILTER (WHERE activity_status = 'WARNING')::int AS "warningUsersCount",
@@ -129,38 +140,56 @@ export class AdminService {
       : Prisma.empty;
     const offset = (page - 1) * limit;
     const [rows, totals] = await Promise.all([
-      this.prisma.$queryRaw<Array<{
-        id: string;
-        name: string;
-        role: UserRole;
-        groupId: string | null;
-        groupName: string | null;
-        lastActivityAt: Date | null;
-        inactivityDays: number | null;
-        activityStatus: ActivityState['activityStatus'];
-        applicationsCount: number;
-        applied: number;
-        interview: number;
-        decision: number;
-        closed: number;
-      }>>(Prisma.sql`${this.userActivityCte()}, application_counts AS (
+      this.prisma.$queryRaw<
+        Array<{
+          id: string;
+          name: string;
+          role: UserRole;
+          groupId: string | null;
+          groupName: string | null;
+          lastActivityAt: Date | null;
+          inactivityDays: number | null;
+          activityStatus: ActivityState['activityStatus'];
+          applicationsCount: number;
+          applied: number;
+          interview: number;
+          decision: number;
+          closed: number;
+          activeTasks: number | null;
+          inProgressTasks: number | null;
+          overdueTasks: number | null;
+          lastTaskAt: Date | null;
+        }>
+      >(Prisma.sql`${this.userActivityCte()}, application_counts AS (
         SELECT "userId", COUNT(*)::int AS total,
           COUNT(*) FILTER (WHERE stage = 'APPLIED')::int AS applied,
           COUNT(*) FILTER (WHERE stage = 'INTERVIEW')::int AS interview,
           COUNT(*) FILTER (WHERE stage = 'DECISION')::int AS decision,
           COUNT(*) FILTER (WHERE stage = 'CLOSED')::int AS closed
         FROM applications GROUP BY "userId"
+      ), development_counts AS (
+        SELECT "userId",
+          COUNT(*) FILTER (WHERE status <> 'DONE'::"TaskStatus")::int AS "activeTasks",
+          COUNT(*) FILTER (WHERE status = 'IN_PROGRESS'::"TaskStatus")::int AS "inProgressTasks",
+          COUNT(*) FILTER (WHERE status <> 'DONE'::"TaskStatus" AND "dueDate" < CURRENT_TIMESTAMP)::int AS "overdueTasks",
+          MAX("updatedAt") AS "lastTaskAt"
+        FROM professional_tasks GROUP BY "userId"
       )
       SELECT c.id, c.name, c.role, c."groupId", c."groupName",
         c.last_at AS "lastActivityAt", c.inactivity_days AS "inactivityDays",
         c.activity_status AS "activityStatus", COALESCE(a.total, 0)::int AS "applicationsCount",
         COALESCE(a.applied, 0)::int AS applied, COALESCE(a.interview, 0)::int AS interview,
-        COALESCE(a.decision, 0)::int AS decision, COALESCE(a.closed, 0)::int AS closed
-      FROM classified c LEFT JOIN application_counts a ON a."userId" = c.id
+        COALESCE(a.decision, 0)::int AS decision, COALESCE(a.closed, 0)::int AS closed,
+        d."activeTasks", d."inProgressTasks", d."overdueTasks", d."lastTaskAt"
+      FROM classified c
+      LEFT JOIN application_counts a ON a."userId" = c.id
+      LEFT JOIN development_counts d ON d."userId" = c.id
       ${statusFilter}
       ORDER BY c.last_at DESC NULLS LAST, c.name ASC, c.id ASC
       OFFSET ${offset} LIMIT ${limit}`),
-      this.prisma.$queryRaw<Array<{ total: number }>>(Prisma.sql`${this.userActivityCte()}
+      this.prisma.$queryRaw<
+        Array<{ total: number }>
+      >(Prisma.sql`${this.userActivityCte()}
         SELECT COUNT(*)::int AS total FROM classified c ${statusFilter}`),
     ]);
     const total = totals[0]?.total ?? 0;
@@ -180,6 +209,12 @@ export class AdminService {
           decision: row.decision,
           closed: row.closed,
         },
+        development: {
+          active: row.activeTasks ?? 0,
+          inProgress: row.inProgressTasks ?? 0,
+          overdue: row.overdueTasks ?? 0,
+          lastTaskAt: row.lastTaskAt?.toISOString() ?? null,
+        },
         avatar: null,
       })),
       total,
@@ -190,16 +225,18 @@ export class AdminService {
   }
 
   async getGroups() {
-    const items = await this.prisma.$queryRaw<Array<{
-      id: string;
-      name: string;
-      memberCount: number;
-      lastActivityAt: Date | null;
-      activeMembers: number;
-      warningMembers: number;
-      criticalMembers: number;
-      neverActiveMembers: number;
-    }>>(Prisma.sql`${this.userActivityCte()}
+    const items = await this.prisma.$queryRaw<
+      Array<{
+        id: string;
+        name: string;
+        memberCount: number;
+        lastActivityAt: Date | null;
+        activeMembers: number;
+        warningMembers: number;
+        criticalMembers: number;
+        neverActiveMembers: number;
+      }>
+    >(Prisma.sql`${this.userActivityCte()}
       SELECT g.id, g.name, COUNT(c.id)::int AS "memberCount",
         MAX(c.last_at) AS "lastActivityAt",
         COUNT(c.id) FILTER (WHERE c.activity_status = 'ACTIVE')::int AS "activeMembers",
@@ -390,6 +427,7 @@ export class AdminService {
       recentActivity,
       taskCounts,
       taskSourceCounts,
+      taskStats,
     ] = await Promise.all([
       this.prisma.user.findUnique({
         where: { id: userId },
@@ -446,12 +484,17 @@ export class AdminService {
         where: { userId },
         _count: { _all: true },
       }),
+      this.prisma.task.aggregate({
+        where: { userId },
+        _max: { updatedAt: true },
+      }),
     ]);
     if (!user) throw new NotFoundException('User not found');
     const dates = [
       appStats._max.createdAt,
       appStats._max.updatedAt,
       transitionStats._max.changedAt,
+      taskStats._max.updatedAt,
     ].filter((date): date is Date => date !== null);
     const lastActivityAt = dates.length
       ? new Date(Math.max(...dates.map((date) => date.getTime())))
@@ -541,65 +584,82 @@ export class AdminService {
   }
 
   async removeMember(groupId: string, userId: string) {
-    const result = await this.groupAssignment.withAssignmentLock(async (transaction) => {
-      const membership = await transaction.membership.findFirst({
-        where: { groupId, userId },
-        select: { id: true },
-      });
-      if (!membership) throw new NotFoundException('Member not found in group');
-      await transaction.membership.delete({ where: { id: membership.id } });
-      return { success: true, groupId, userId, membershipRemoved: true };
-    });
+    const result = await this.groupAssignment.withAssignmentLock(
+      async (transaction) => {
+        const membership = await transaction.membership.findFirst({
+          where: { groupId, userId },
+          select: { id: true },
+        });
+        if (!membership)
+          throw new NotFoundException('Member not found in group');
+        await transaction.membership.delete({ where: { id: membership.id } });
+        return { success: true, groupId, userId, membershipRemoved: true };
+      },
+    );
     this.logger.log(`Removed user ${userId} from group ${groupId}`);
     return result;
   }
 
   async assignUserToGroup(userId: string, targetGroupId?: string) {
-    const result = await this.groupAssignment.withAssignmentLock(async (transaction) => {
-      const user = await transaction.user.findUnique({
-        where: { id: userId },
-        select: { id: true },
-      });
-      if (!user) throw new NotFoundException('User not found');
-      let groupId: string;
-      if (targetGroupId) {
-        const target = await transaction.group.findUnique({
-          where: { id: targetGroupId },
+    const result = await this.groupAssignment.withAssignmentLock(
+      async (transaction) => {
+        const user = await transaction.user.findUnique({
+          where: { id: userId },
           select: { id: true },
         });
-        if (!target) throw new NotFoundException('Group not found');
-        const membership = await transaction.membership.findUnique({
-          where: { userId },
-          select: { id: true, groupId: true },
-        });
-        if (membership?.groupId === targetGroupId) {
-          groupId = targetGroupId;
-        } else {
-          const memberCount = await transaction.membership.count({
-            where: { groupId: targetGroupId },
+        if (!user) throw new NotFoundException('User not found');
+        let groupId: string;
+        if (targetGroupId) {
+          const target = await transaction.group.findUnique({
+            where: { id: targetGroupId },
+            select: { id: true },
           });
-          if (memberCount >= MAX_GROUP_SIZE)
-            throw new ConflictException('Group is at full capacity');
-          if (membership) {
-            await transaction.membership.delete({
-              where: { id: membership.id },
+          if (!target) throw new NotFoundException('Group not found');
+          const membership = await transaction.membership.findUnique({
+            where: { userId },
+            select: { id: true, groupId: true },
+          });
+          if (membership?.groupId === targetGroupId) {
+            groupId = targetGroupId;
+          } else {
+            const memberCount = await transaction.membership.count({
+              where: { groupId: targetGroupId },
             });
+            if (memberCount >= MAX_GROUP_SIZE)
+              throw new ConflictException('Group is at full capacity');
+            if (membership) {
+              await transaction.membership.delete({
+                where: { id: membership.id },
+              });
+            }
+            await transaction.membership.create({
+              data: { userId, groupId: targetGroupId },
+            });
+            groupId = targetGroupId;
           }
-          await transaction.membership.create({
-            data: { userId, groupId: targetGroupId },
-          });
-          groupId = targetGroupId;
+        } else {
+          groupId = await this.groupAssignment.assignUser(transaction, userId);
         }
-      } else {
-        groupId = await this.groupAssignment.assignUser(transaction, userId);
-      }
-      const group = await transaction.group.findUniqueOrThrow({
-        where: { id: groupId },
-        select: { id: true, name: true },
-      });
-      return { userId, group };
-    });
+        const group = await transaction.group.findUniqueOrThrow({
+          where: { id: groupId },
+          select: { id: true, name: true },
+        });
+        return { userId, group };
+      },
+    );
     this.logger.log(`Assigned user ${userId} to group ${result.group.id}`);
     return result;
+  }
+
+  getUxAnalytics() {
+    return this.uxAnalytics.getAnalytics();
+  }
+
+  updateUxConfig(dto: UpdateUxConfigDto) {
+    return this.uxAnalytics.updateConfig(dto);
+  }
+
+  recordUxEvent(userId: string, dto: TrackUxEventDto) {
+    return this.uxAnalytics.recordEvent(userId, dto);
   }
 }

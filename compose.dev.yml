@@ -3,6 +3,7 @@ name: cms-development-backend
 services:
   postgres:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${DEV_POSTGRES_USER:?Set DEV_POSTGRES_USER in development .env}
       POSTGRES_PASSWORD: ${DEV_POSTGRES_PASSWORD:?Set DEV_POSTGRES_PASSWORD in development .env}
@@ -18,10 +19,12 @@ services:
     mem_limit: 512m
 
   api:
+    restart: unless-stopped
     build:
       context: .
       dockerfile: Dockerfile
     environment:
+      OBSERVABILITY_ENV: development
       NODE_ENV: development
       PORT: 3000
       DATABASE_URL: postgresql://${DEV_POSTGRES_USER:?Set DEV_POSTGRES_USER in development .env}:${DEV_POSTGRES_PASSWORD:?Set DEV_POSTGRES_PASSWORD in development .env}@postgres:5432/${DEV_POSTGRES_DB:?Set DEV_POSTGRES_DB in development .env}?schema=public
@@ -35,6 +38,8 @@ services:
       REFRESH_TOKEN_TTL_SECONDS: ${DEV_REFRESH_TOKEN_TTL_SECONDS:-1209600}
       CV_STORAGE_DIR: /app/private-storage/cvs
       CV_MAX_FILE_SIZE_BYTES: ${DEV_CV_MAX_FILE_SIZE_BYTES:-5242880}
+    env_file:
+      - /data/observability/secrets/app-metrics.env
     ports:
       - "${DEV_BIND_ADDRESS:-127.0.0.1}:${DEV_API_HOST_PORT:?Set DEV_API_HOST_PORT in development .env}:3000"
     volumes:

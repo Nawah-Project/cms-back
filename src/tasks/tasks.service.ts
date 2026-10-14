@@ -168,17 +168,17 @@ export class TasksService {
       _count: { notes: number };
     },
   >(task: T) {
+    const { _count, ...rest } = task;
     const total = task.checklist.length;
     const completed = task.checklist.filter((item) => item.completed).length;
     return {
-      ...task,
+      ...rest,
       overdue:
         task.dueDate !== null &&
         task.dueDate < new Date() &&
         task.status !== TaskStatus.DONE,
       progress: { completed, total },
-      unreadMentorFeedbackCount: task._count.notes,
-      _count: undefined,
+      unreadMentorFeedbackCount: _count.notes,
     };
   }
 

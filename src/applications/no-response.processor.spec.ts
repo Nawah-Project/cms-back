@@ -55,16 +55,14 @@ describe('NoResponseProcessor', () => {
 
   it('does not record a transition when a concurrent edit makes the candidate ineligible', async () => {
     const prisma = {
-      $queryRaw: jest
-        .fn()
-        .mockResolvedValue([
-          {
-            id: 'application-1',
-            userId: 'member-1',
-            stage: ApplicationStage.APPLIED,
-            updatedAt: new Date(),
-          },
-        ]),
+      $queryRaw: jest.fn().mockResolvedValue([
+        {
+          id: 'application-1',
+          userId: 'member-1',
+          stage: ApplicationStage.APPLIED,
+          updatedAt: new Date(),
+        },
+      ]),
       $transaction: jest.fn(async (callback: any) =>
         callback({
           application: {

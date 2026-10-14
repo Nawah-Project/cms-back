@@ -13,6 +13,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { HealthController } from './health.controller';
 import { TasksModule } from './tasks/tasks.module';
 import { FeedbackModule } from './feedback/feedback.module';
+import { ObservabilityModule } from './observability/observability.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { FeedbackModule } from './feedback/feedback.module';
     ProfileModule,
     TasksModule,
     FeedbackModule,
+    ObservabilityModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

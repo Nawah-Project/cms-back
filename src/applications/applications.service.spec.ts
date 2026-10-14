@@ -35,11 +35,14 @@ describe('ApplicationsService', () => {
       applicationStageTransition: { create: jest.fn().mockResolvedValue({}) },
     };
     prisma = {
-      $transaction: jest.fn((callback) => callback(transaction)),
+      $transaction: jest.fn((input) =>
+        Array.isArray(input) ? Promise.all(input) : input(transaction),
+      ),
       application: {
         create: jest.fn(async ({ data }) => ({ ...application, ...data })),
         groupBy: jest.fn().mockResolvedValue([]),
         findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(0),
       },
     };
     service = new ApplicationsService(prisma as PrismaService);
@@ -57,7 +60,7 @@ describe('ApplicationsService', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('does not allow a member to manually set NO_RESPONSE', async () => {
+  it('does not allow a member to manually set NO_RESPONSE on creation', async () => {
     await expect(
       service.create('user-id', {
         companyName: 'New Co',
@@ -122,5 +125,70 @@ describe('ApplicationsService', () => {
     expect(
       transaction.applicationStageTransition.create,
     ).not.toHaveBeenCalled();
+  });
+
+  it('filters active applications excluding CLOSED and returns unfilteredTotal', async () => {
+    prisma.application.findMany.mockResolvedValue([application]);
+    prisma.application.count
+      .mockResolvedValueOnce(1) // filtered count
+      .mockResolvedValueOnce(5); // unfiltered count
+
+    const result = await service.findAll('user-id', {
+      stage: 'ACTIVE',
+      page: 1,
+      limit: 10,
+    });
+
+    expect(prisma.application.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          userId: 'user-id',
+          stage: { not: ApplicationStage.CLOSED },
+        }),
+      }),
+    );
+    expect(result.total).toBe(1);
+    expect(result.unfilteredTotal).toBe(5);
+  });
+
+  it('allows editing an application already closed with NO_RESPONSE', async () => {
+    application.stage = 'CLOSED';
+    application.outcome = 'NO_RESPONSE';
+
+    const result = await service.update('user-id', 'application-id', {
+      companyName: 'Updated Company Name',
+      outcome: ApplicationOutcome.NO_RESPONSE,
+    });
+
+    expect(result.companyName).toBe('Updated Company Name');
+    expect(result.outcome).toBe(ApplicationOutcome.NO_RESPONSE);
+  });
+
+  it('rejects setting NO_RESPONSE on an application that was not NO_RESPONSE', async () => {
+    application.outcome = 'NONE';
+
+    await expect(
+      service.update('user-id', 'application-id', {
+        outcome: ApplicationOutcome.NO_RESPONSE,
+      }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('returns expiringSoonCount and recentNoResponseCount in getDashboard', async () => {
+    prisma.application.groupBy.mockResolvedValue([
+      { stage: 'APPLIED', outcome: 'NONE', _count: { _all: 3 } },
+      { stage: 'CLOSED', outcome: 'NO_RESPONSE', _count: { _all: 2 } },
+    ]);
+    prisma.application.findMany.mockResolvedValue([]);
+    prisma.application.count
+      .mockResolvedValueOnce(2) // expiringSoonCount
+      .mockResolvedValueOnce(1); // recentNoResponseCount
+
+    const stats = await service.getDashboard('user-id');
+
+    expect(stats.expiringSoonCount).toBe(2);
+    expect(stats.recentNoResponseCount).toBe(1);
+    expect(stats.active.total).toBe(3);
+    expect(stats.closed.noResponse).toBe(2);
   });
 });

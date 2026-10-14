@@ -346,7 +346,11 @@ export class MembersService {
         ).toISOString()
       : null;
     const companies = [
-      ...new Set(applications.map((application) => application.companyName)),
+      ...new Set(
+        applications
+          .map((application) => application.companyName.trim().toLowerCase())
+          .filter(Boolean),
+      ),
     ];
     const otherUserIds = memberIds.filter((id) => id !== targetMemberId);
     const shared =
@@ -354,7 +358,9 @@ export class MembersService {
         ? await this.prisma.application.findMany({
             where: {
               userId: { in: otherUserIds },
-              companyName: { in: companies },
+              OR: companies.map((name) => ({
+                companyName: { equals: name.trim(), mode: 'insensitive' },
+              })),
             },
             select: { userId: true, companyName: true },
             distinct: ['userId', 'companyName'],
@@ -373,9 +379,12 @@ export class MembersService {
       for (const row of shared) {
         const summary = membersById.get(row.userId);
         if (!summary) continue;
-        const list = sharedCompanyByName.get(row.companyName) ?? [];
-        list.push(summary);
-        sharedCompanyByName.set(row.companyName, list);
+        const normalizedKey = row.companyName.trim().toLowerCase();
+        const list = sharedCompanyByName.get(normalizedKey) ?? [];
+        if (!list.some((m) => m.id === summary.id)) {
+          list.push(summary);
+        }
+        sharedCompanyByName.set(normalizedKey, list);
       }
     }
     return {
@@ -387,17 +396,20 @@ export class MembersService {
         hasCv: Boolean(member.cv),
         lastUpdatedAt,
       },
-      applications: applications.map((application) => ({
-        ...application,
-        outcome:
-          application.outcome === ApplicationOutcome.NONE
-            ? null
-            : application.outcome,
-        updatedAt: application.updatedAt.toISOString(),
-        sharedCompany:
-          (sharedCompanyByName.get(application.companyName)?.length ?? 0) > 0,
-        otherMembers: sharedCompanyByName.get(application.companyName) ?? [],
-      })),
+      applications: applications.map((application) => {
+        const key = application.companyName.trim().toLowerCase();
+        const otherMembers = sharedCompanyByName.get(key) ?? [];
+        return {
+          ...application,
+          outcome:
+            application.outcome === ApplicationOutcome.NONE
+              ? null
+              : application.outcome,
+          updatedAt: application.updatedAt.toISOString(),
+          sharedCompany: otherMembers.length > 0,
+          otherMembers,
+        };
+      }),
     };
   }
 }

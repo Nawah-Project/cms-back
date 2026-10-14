@@ -1,5 +1,7 @@
 node_modules
 dist
+*.tsbuildinfo
+.ux-config.json*
 .git
 .env
 .env.*

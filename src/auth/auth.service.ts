@@ -88,11 +88,46 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
+  private shouldAssignGroupOnRegister(): boolean {
+    return (
+      process.env.ASSIGN_GROUP_ON_REGISTER?.trim().toLowerCase() === 'true'
+    );
+  }
+
+  private async ensureInitialJourneyState(
+    transaction: Prisma.TransactionClient,
+    userId: string,
+    isGroupUnlocked: boolean,
+  ): Promise<void> {
+    if (transaction.userJourneyState?.upsert) {
+      await transaction.userJourneyState.upsert({
+        where: { userId },
+        update: {},
+        create: {
+          userId,
+          currentWeek: 0,
+          currentNodeCode: 'TASK_0',
+          isGroupUnlocked,
+        },
+      });
+    } else if (transaction.userJourneyState?.create) {
+      await transaction.userJourneyState.create({
+        data: {
+          userId,
+          currentWeek: 0,
+          currentNodeCode: 'TASK_0',
+          isGroupUnlocked,
+        },
+      });
+    }
+  }
+
   async register(
     dto: RegisterDto,
   ): Promise<{ user: PublicUser; tokens: TokenPair }> {
     const email = dto.email.trim().toLowerCase();
     const passwordHash = await bcrypt.hash(dto.password, 12);
+    const assignOnRegister = this.shouldAssignGroupOnRegister();
     try {
       const user = await this.groupAssignment.withAssignmentLock(
         async (transaction) => {
@@ -100,7 +135,14 @@ export class AuthService {
             data: { name: dto.name.trim(), email, passwordHash },
             select: { id: true, name: true, email: true, role: true },
           });
-          await this.groupAssignment.assignUser(transaction, created.id);
+          if (assignOnRegister) {
+            await this.groupAssignment.assignUser(transaction, created.id);
+          }
+          await this.ensureInitialJourneyState(
+            transaction,
+            created.id,
+            assignOnRegister,
+          );
           return created;
         },
       );
@@ -188,7 +230,15 @@ export class AuthService {
             providerEmail,
           },
         });
-        await this.groupAssignment.assignUser(transaction, createdUser.id);
+        const assignOnRegister = this.shouldAssignGroupOnRegister();
+        if (assignOnRegister) {
+          await this.groupAssignment.assignUser(transaction, createdUser.id);
+        }
+        await this.ensureInitialJourneyState(
+          transaction,
+          createdUser.id,
+          assignOnRegister,
+        );
         return createdUser;
       },
     );

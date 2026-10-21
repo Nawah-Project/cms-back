@@ -38,6 +38,13 @@ export const databaseQueryDuration = new Histogram({
   registers: [metricsRegistry],
 });
 
+export const domainEventsTotal = new Counter({
+  name: 'domain_events_total',
+  help: 'Total domain events emitted across the application, grouped by event_name.',
+  labelNames: ['event_name'],
+  registers: [metricsRegistry],
+});
+
 const externalDependencyRequests = new Counter({
   name: 'external_dependency_requests_total',
   help: 'External dependency requests by fixed dependency, operation, and outcome.',

@@ -1,10 +1,14 @@
 import {
+  IsBoolean,
   IsDateString,
   IsEnum,
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
   IsUrl,
+  Max,
+  Min,
 } from 'class-validator';
 import { ApplicationStage } from '../enums/application-stage.enum';
 import { ApplicationOutcome } from '../enums/application-outcome.enum';
@@ -45,4 +49,33 @@ export class CreateApplicationDto {
   @IsOptional()
   @IsEnum(ApplicationOutcome)
   outcome?: ApplicationOutcome;
+
+  @IsOptional()
+  @IsBoolean()
+  isTailored?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(4)
+  journeyWeek?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  hasAssignment?: boolean;
+
+  @IsOptional()
+  @IsDateString()
+  interviewDate?: string;
+
+  @IsOptional()
+  prepChecklist?: Record<string, unknown> | unknown[];
+
+  @IsOptional()
+  @IsString()
+  interviewNotes?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  sharedWithGroup?: boolean;
 }

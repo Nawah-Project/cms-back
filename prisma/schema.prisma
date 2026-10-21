@@ -89,27 +89,51 @@ enum UserRole {
   ADMIN
 }
 
+enum JourneyNodeType {
+  ONBOARDING_QUEST // المهمة صفر
+  MAIN_QUEST       // المهمات 1 إلى 5 في كل أسبوع
+  REVIEW_STATION   // محطة اليوم السابع (التقييم والتعديل 1, 2, 3)
+  FINAL_REPORT     // التقرير النهائي في نهاية الأسبوع الرابع
+}
+
+enum SideTaskType {
+  LINKEDIN_POST    // منشور
+  OUTREACH_CONTACT // تواصل وبناء علاقات
+  WEEKLY_REVIEW    // تسليم مراجعة وتعديل اليوم السابع
+}
+
+enum OutreachStatus {
+  SENT
+  REPLIED
+  REFERRED
+}
+
 model User {
-  id               String                       @id @default(uuid()) @db.Uuid
-  name             String
-  email            String                       @unique
-  passwordHash     String?
-  refreshTokenHash String?
-  role             UserRole                     @default(USER)
-  portfolioUrl     String?                      @db.VarChar(2048)
-  createdAt        DateTime                     @default(now())
-  updatedAt        DateTime                     @updatedAt
-  membership       Membership?
-  applications     Application[]
-  transitions      ApplicationStageTransition[]
-  authIdentities   AuthIdentity[]
-  cv               UserCv?
-  assignedTasks    Task[]                       @relation("TaskAssignee")
-  createdTasks     Task[]                       @relation("TaskCreator")
-  taskNotes        TaskNote[]                   @relation("TaskNoteAuthor")
-  authoredFeedback FeedbackPost[]               @relation("FeedbackAuthor")
-  targetedFeedback FeedbackPost[]               @relation("FeedbackTarget")
-  feedbackReads    FeedbackRead[]
+  id                  String                       @id @default(uuid()) @db.Uuid
+  name                String
+  email               String                       @unique
+  passwordHash        String?
+  refreshTokenHash    String?
+  role                UserRole                     @default(USER)
+  portfolioUrl        String?                      @db.VarChar(2048)
+  targetJobTitle      String?                      @db.VarChar(150)
+  preferredLocations  String[]                     @default([])
+  createdAt           DateTime                     @default(now())
+  updatedAt           DateTime                     @updatedAt
+  membership          Membership?
+  applications        Application[]
+  transitions         ApplicationStageTransition[]
+  authIdentities      AuthIdentity[]
+  cv                  UserCv?
+  assignedTasks       Task[]                       @relation("TaskAssignee")
+  createdTasks        Task[]                       @relation("TaskCreator")
+  taskNotes           TaskNote[]                   @relation("TaskNoteAuthor")
+  authoredFeedback    FeedbackPost[]               @relation("FeedbackAuthor")
+  targetedFeedback    FeedbackPost[]               @relation("FeedbackTarget")
+  feedbackReads       FeedbackRead[]
+  journeyState        UserJourneyState?
+  sideTaskSubmissions SideTaskSubmission[]
+  notifications       Notification[]
 
   @@map("users")
 }
@@ -175,6 +199,13 @@ model Application {
   jobUrl            String?
   stage             ApplicationStage             @default(APPLIED)
   outcome           ApplicationOutcome           @default(NONE)
+  isTailored        Boolean                      @default(false)
+  journeyWeek       Int                          @default(1)
+  hasAssignment     Boolean                      @default(false)
+  interviewDate     DateTime?
+  prepChecklist     Json?
+  interviewNotes    String?                      @db.Text
+  sharedWithGroup   Boolean                      @default(false)
   closedAt          DateTime?
   createdAt         DateTime                     @default(now())
   updatedAt         DateTime                     @updatedAt
@@ -257,24 +288,27 @@ model TaskNote {
 }
 
 model FeedbackPost {
-  id           String             @id @default(uuid()) @db.Uuid
-  authorId     String             @db.Uuid
-  title        String             @db.VarChar(200)
-  content      String             @db.VarChar(20000)
-  visibility   FeedbackVisibility
-  groupId      String?            @db.Uuid
-  targetUserId String?            @db.Uuid
-  context      FeedbackContext    @default(GENERAL)
-  tags         FeedbackTag[]      @default([])
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
-  publishedAt  DateTime           @default(now())
-  archivedAt   DateTime?
-  author       User               @relation("FeedbackAuthor", fields: [authorId], references: [id], onDelete: Restrict)
-  group        Group?             @relation(fields: [groupId], references: [id], onDelete: Restrict)
-  targetUser   User?              @relation("FeedbackTarget", fields: [targetUserId], references: [id], onDelete: Restrict)
-  resources    FeedbackResource[]
-  reads        FeedbackRead[]
+  id                String             @id @default(uuid()) @db.Uuid
+  authorId          String             @db.Uuid
+  title             String             @db.VarChar(200)
+  content           String             @db.VarChar(20000)
+  visibility        FeedbackVisibility
+  groupId           String?            @db.Uuid
+  targetUserId      String?            @db.Uuid
+  context           FeedbackContext    @default(GENERAL)
+  tags              FeedbackTag[]      @default([])
+  unlockTriggerCode String?            @db.VarChar(100)
+  promptTemplate    String?            @db.Text
+  tierLevel         String?            @default("BASIC")
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  publishedAt       DateTime           @default(now())
+  archivedAt        DateTime?
+  author            User               @relation("FeedbackAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  group             Group?             @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  targetUser        User?              @relation("FeedbackTarget", fields: [targetUserId], references: [id], onDelete: Restrict)
+  resources         FeedbackResource[]
+  reads             FeedbackRead[]
 
   @@index([authorId], map: "IDX_feedback_posts_authorId")
   @@index([visibility], map: "IDX_feedback_posts_visibility")
@@ -333,4 +367,109 @@ model ApplicationStageTransition {
   @@index([applicationId, changedAt], map: "IDX_stage_transitions_application_changed")
   @@index([changedAt], map: "IDX_stage_transitions_changed")
   @@map("application_stage_transitions")
+}
+
+model JourneyNode {
+  id                     String          @id @default(uuid()) @db.Uuid
+  code                   String          @unique @db.VarChar(50) // مثل: TASK_0, W1_M1..W1_M5, W1_REVIEW, W2_M1...
+  weekNumber             Int             // 0 للمهمة صفر، و 1..4 للأسابيع الأربعة
+  orderIndex             Int             // الترتيب المتسلسل العام (0, 1, 2, 3...)
+  nodeType               JourneyNodeType @default(MAIN_QUEST)
+  titleAr                String          @db.VarChar(200)
+  titleEn                String          @db.VarChar(200)
+  descriptionAr          String?         @db.Text
+  descriptionEn          String?         @db.Text
+  durationDays           Int             @default(1) // 1 للمهام 1-4، و 2 للمهمة الخامسة، و 1 لليوم السابع
+  requiredAppsCount      Int             @default(0) // عدد الطلبات العامة المطلوبة في هذه العقدة
+  requiredTailoredCount  Int             @default(0) // عدد الطلبات الخاصة (طلب خاص) المطلوبة
+  requiredPostsCount     Int             @default(0) // عدد المنشورات (منشور) المطلوبة
+  requiredOutreachCount  Int             @default(0) // عدد التواصل (تواصل) المطلوب
+  unlocksInsightCode     String?         @db.VarChar(100) // كود الملاحظة التي تفتح عند إتمام هذه العقدة
+  nextNodeCode           String?         @db.VarChar(50)  // كود العقدة التالية التي ينقشع عنها الضباب
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @updatedAt
+
+  @@index([weekNumber, orderIndex])
+  @@map("journey_nodes")
+}
+
+model UserJourneyState {
+  id                   String   @id @default(uuid()) @db.Uuid
+  userId               String   @unique @db.Uuid
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currentWeek          Int      @default(0) // يبدأ من 0 (المهمة صفر) ثم 1، 2، 3، 4
+  currentNodeCode      String   @default("TASK_0") @db.VarChar(50)
+  currentNodeStartedAt DateTime @default(now())
+  weekStartedAt        DateTime @default(now())
+  completedNodeCodes   String[] @default([])
+  unlockedInsightCodes String[] @default([])
+  isGroupUnlocked      Boolean  @default(false) // يفتح بعد إتمام TASK_0 (5 طلبات)
+  canUseTableView      Boolean  @default(false) // يفتح بعد إتمام W1_M1 (10 طلبات في الأسبوع 1)
+  hasUnlockedAdvPrep   Boolean  @default(false) // يفتح عند أول INTERVIEW أو hasAssignment
+  cvVersionNumber      Int      @default(1)
+  updatedAt            DateTime @updatedAt
+
+  @@map("user_journey_states")
+}
+
+model SideTaskSubmission {
+  id            String          @id @default(uuid()) @db.Uuid
+  userId        String          @db.Uuid
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nodeCode      String          @db.VarChar(50)
+  journeyWeek   Int
+  type          SideTaskType
+  // حقول خاصة بـ LINKEDIN_POST
+  postUrl       String?         @db.VarChar(2048)
+  postTopic     String?         @db.VarChar(300)
+  // حقول خاصة بـ OUTREACH_CONTACT
+  applicationId String?         @db.Uuid
+  contactName   String?         @db.VarChar(150)
+  contactRole   String?         @db.VarChar(150)
+  contactUrl    String?         @db.VarChar(2048)
+  outreachState OutreachStatus? @default(SENT)
+  // حقول خاصة بـ WEEKLY_REVIEW
+  reviewSummary String?         @db.Text
+  newCvUploaded Boolean         @default(false)
+  sharedInGroup Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+
+  @@index([userId, nodeCode, type])
+  @@index([userId, journeyWeek])
+  @@map("side_task_submissions")
+}
+
+model DomainEventLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  eventName    String   @db.VarChar(100)
+  actorId      String?  @db.Uuid
+  targetUserId String?  @db.Uuid
+  groupId      String?  @db.Uuid
+  entityType   String   @db.VarChar(50)
+  entityId     String?  @db.VarChar(100)
+  payload      Json?
+  createdAt    DateTime @default(now())
+
+  @@index([actorId, createdAt(sort: Desc)])
+  @@index([groupId, createdAt(sort: Desc)])
+  @@index([eventName, createdAt(sort: Desc)])
+  @@map("domain_event_logs")
+}
+
+model Notification {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String    @db.VarChar(50) // QUEST_UNLOCKED, INSIGHT_UNLOCKED, GROUP_ACTIVITY, INTERVIEW_PREP
+  titleAr   String    @db.VarChar(255)
+  titleEn   String    @db.VarChar(255)
+  bodyAr    String    @db.Text
+  bodyEn    String    @db.Text
+  actionUrl String?   @db.VarChar(500)
+  isRead    Boolean   @default(false)
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, isRead, createdAt(sort: Desc)])
+  @@map("notifications")
 }

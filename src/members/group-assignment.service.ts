@@ -70,4 +70,10 @@ export class GroupAssignmentService {
     });
     return group.id;
   }
+
+  async assignUserToGroup(userId: string): Promise<string> {
+    return this.withAssignmentLock((transaction) =>
+      this.assignUser(transaction, userId),
+    );
+  }
 }

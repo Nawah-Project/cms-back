@@ -38,8 +38,15 @@ services:
       REFRESH_TOKEN_TTL_SECONDS: ${DEV_REFRESH_TOKEN_TTL_SECONDS:-1209600}
       CV_STORAGE_DIR: /app/private-storage/cvs
       CV_MAX_FILE_SIZE_BYTES: ${DEV_CV_MAX_FILE_SIZE_BYTES:-5242880}
+      SMTP_HOST: ${DEV_SMTP_HOST:-}
+      SMTP_PORT: ${DEV_SMTP_PORT:-465}
+      SMTP_SECURE: ${DEV_SMTP_SECURE:-true}
+      SMTP_USER: ${DEV_SMTP_USER:-}
+      SMTP_PASS: ${DEV_SMTP_PASS:-}
+      SMTP_FROM: ${DEV_SMTP_FROM:-}
     env_file:
-      - /data/observability/secrets/app-metrics.env
+      - path: /data/observability/secrets/app-metrics.env
+        required: false
     ports:
       - "${DEV_BIND_ADDRESS:-127.0.0.1}:${DEV_API_HOST_PORT:?Set DEV_API_HOST_PORT in development .env}:3000"
     volumes:

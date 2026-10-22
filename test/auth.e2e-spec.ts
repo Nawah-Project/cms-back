@@ -8,6 +8,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { AuthProvider } from '@prisma/client';
 import { AuthService } from '../src/auth/auth.service';
+import { EmailSenderService } from '../src/auth/email-sender.service';
 import { SocialAuthService } from '../src/auth/social-auth.service';
 import { AccountLinkRequiredError } from '../src/auth/social-auth.errors';
 import { resetTestDatabase } from './reset-test-database';
@@ -98,6 +99,52 @@ describe('Authentication and application ownership (e2e)', () => {
         password: 'password',
       })
       .expect(400);
+    await request(server)
+      .post('/auth/register')
+      .send({
+        name: 'Disposable',
+        email: 'fake@tempmail.com',
+        password: 'SecurePass123!',
+      })
+      .expect(400);
+  });
+
+  it('verifies email with a 6-digit OTP code and enforces resend cooldown', async () => {
+    const emailSender = app.get(EmailSenderService);
+    const agent = request.agent(server);
+    const regRes = await agent
+      .post('/auth/register')
+      .send({
+        name: 'Verify User',
+        email: 'verify-otp@example.com',
+        password: 'SecurePass123!',
+      })
+      .expect(201);
+
+    expect(regRes.body.emailVerified).toBe(false);
+    const sentOtp = emailSender.lastSentOtpForTest;
+    expect(sentOtp?.to).toBe('verify-otp@example.com');
+    expect(sentOtp?.code).toMatch(/^\d{6}$/);
+
+    // Resend immediately should hit the 60s cooldown
+    await agent.post('/auth/resend-verification').expect(400);
+
+    // Wrong 6-digit code should fail
+    const wrongCode = sentOtp!.code === '000000' ? '111111' : '000000';
+    await agent
+      .post('/auth/verify-email')
+      .send({ code: wrongCode })
+      .expect(400);
+
+    // Correct 6-digit code should verify the user
+    const verifyRes = await agent
+      .post('/auth/verify-email')
+      .send({ code: sentOtp!.code })
+      .expect(200);
+    expect(verifyRes.body.emailVerified).toBe(true);
+
+    const meRes = await agent.get('/auth/me').expect(200);
+    expect(meRes.body.emailVerified).toBe(true);
   });
 
   it('logs in, restores /me from a cookie, and rejects invalid credentials', async () => {

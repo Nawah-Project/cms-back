@@ -189,7 +189,8 @@ export class JourneyEngineService implements OnModuleInit {
         : Promise.resolve(0),
     ]);
 
-    const isGroupUnlocked = Boolean(membership) || existingAppsCount >= 5;
+    const isGroupUnlocked = Boolean(membership);
+    const canUseTableView = existingAppsCount >= 10;
 
     return this.prisma.userJourneyState.create({
       data: {
@@ -201,7 +202,7 @@ export class JourneyEngineService implements OnModuleInit {
         completedNodeCodes: [],
         unlockedInsightCodes: [],
         isGroupUnlocked,
-        canUseTableView: false,
+        canUseTableView,
         hasUnlockedAdvPrep: false,
         cvVersionNumber: 1,
       },
@@ -230,10 +231,7 @@ export class JourneyEngineService implements OnModuleInit {
     outreachCount: number;
     weeklyReviewCount: number;
   }> {
-    const dateFilter =
-      node.code === 'TASK_0'
-        ? {}
-        : { createdAt: { gte: state.currentNodeStartedAt } };
+    const dateFilter = { createdAt: { gte: state.currentNodeStartedAt } };
 
     const [
       appsCount,
@@ -420,7 +418,7 @@ export class JourneyEngineService implements OnModuleInit {
           'أحسنت إتمام المهمة صفر! تم تسكينك في مجموعتك ويمكنك الآن متابعة تقدم زملائك.',
         bodyEn:
           'Congratulations on completing Task 0! You have been assigned to a cohort group and can now view Members Progress.',
-        actionUrl: '/members',
+        actionUrl: '/members-progress',
       });
     }
 
@@ -536,6 +534,8 @@ export class JourneyEngineService implements OnModuleInit {
         applicationId: dto.applicationId || null,
         contactName: dto.contactName?.trim() || null,
         contactRole: dto.contactRole?.trim() || null,
+        companyName: dto.companyName?.trim() || null,
+        contactMethod: dto.contactMethod?.trim() || null,
         contactUrl: dto.contactUrl?.trim() || null,
         outreachState:
           dto.type === SideTaskType.OUTREACH_CONTACT

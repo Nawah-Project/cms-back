@@ -16,6 +16,7 @@ import { clearAuthCookies, setAuthCookies } from './auth-cookie.util';
 import { REFRESH_COOKIE } from './auth.constants';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { VerifyEmailDto } from './dto/verify-email.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { SocialAuthService } from './social-auth.service';
 import { AccountLinkRequiredError } from './social-auth.errors';
@@ -96,6 +97,27 @@ export class AuthController {
     const result = await this.auth.login(dto);
     setAuthCookies(response, result.tokens);
     return result.user;
+  }
+
+  @Post('verify-email')
+  @UseGuards(JwtAuthGuard, ThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @HttpCode(HttpStatus.OK)
+  async verifyEmail(
+    @Req() request: Request & { user: { id: string } },
+    @Body() dto: VerifyEmailDto,
+  ) {
+    return this.auth.verifyEmail(request.user.id, dto.code);
+  }
+
+  @Post('resend-verification')
+  @UseGuards(JwtAuthGuard, ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @HttpCode(HttpStatus.OK)
+  async resendVerification(
+    @Req() request: Request & { user: { id: string } },
+  ) {
+    return this.auth.resendVerification(request.user.id);
   }
 
   @Post('logout')

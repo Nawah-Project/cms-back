@@ -106,20 +106,27 @@ enum OutreachStatus {
   SENT
   REPLIED
   REFERRED
+  NO_RESPONSE
 }
 
 model User {
-  id                  String                       @id @default(uuid()) @db.Uuid
-  name                String
-  email               String                       @unique
-  passwordHash        String?
-  refreshTokenHash    String?
-  role                UserRole                     @default(USER)
-  portfolioUrl        String?                      @db.VarChar(2048)
-  targetJobTitle      String?                      @db.VarChar(150)
-  preferredLocations  String[]                     @default([])
-  createdAt           DateTime                     @default(now())
-  updatedAt           DateTime                     @updatedAt
+  id                          String                       @id @default(uuid()) @db.Uuid
+  name                        String
+  email                       String                       @unique
+  passwordHash                String?
+  refreshTokenHash            String?
+  role                        UserRole                     @default(USER)
+  emailVerified               Boolean                      @default(false)
+  emailVerifiedAt             DateTime?
+  emailVerificationCodeHash   String?                      @db.VarChar(128)
+  emailVerificationExpiresAt  DateTime?
+  emailVerificationSentAt     DateTime?
+  emailVerificationAttempts   Int                          @default(0)
+  portfolioUrl                String?                      @db.VarChar(2048)
+  targetJobTitle              String?                      @db.VarChar(150)
+  preferredLocations          String[]                     @default([])
+  createdAt                   DateTime                     @default(now())
+  updatedAt                   DateTime                     @updatedAt
   membership          Membership?
   applications        Application[]
   transitions         ApplicationStageTransition[]
@@ -426,6 +433,8 @@ model SideTaskSubmission {
   applicationId String?         @db.Uuid
   contactName   String?         @db.VarChar(150)
   contactRole   String?         @db.VarChar(150)
+  companyName   String?         @db.VarChar(200)
+  contactMethod String?         @db.VarChar(100)
   contactUrl    String?         @db.VarChar(2048)
   outreachState OutreachStatus? @default(SENT)
   // حقول خاصة بـ WEEKLY_REVIEW

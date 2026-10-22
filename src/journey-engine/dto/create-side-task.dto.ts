@@ -48,6 +48,16 @@ export class CreateSideTaskDto {
   contactRole?: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  companyName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  contactMethod?: string;
+
+  @IsOptional()
   @IsUrl(
     { require_protocol: true, protocols: ['http', 'https'] },
     { message: 'contactUrl must be a valid URL with http or https protocol' },

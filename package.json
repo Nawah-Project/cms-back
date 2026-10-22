@@ -28,6 +28,7 @@
   "dependencies": {
     "@nestjs/common": "^11.0.1",
     "@nestjs/core": "^11.0.1",
+    "@nestjs/event-emitter": "^12.0.1",
     "@nestjs/jwt": "^11.0.2",
     "@nestjs/mapped-types": "^12.0.0",
     "@nestjs/platform-express": "^11.0.1",
@@ -84,8 +85,18 @@
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
-      "^.+\\.(t|j)s$": "ts-jest"
+      "^.+\\.(t|j)s$": [
+        "ts-jest",
+        {
+          "tsconfig": {
+            "allowJs": true
+          }
+        }
+      ]
     },
+    "transformIgnorePatterns": [
+      "node_modules/(?!(@nestjs/event-emitter)/)"
+    ],
     "collectCoverageFrom": [
       "**/*.(t|j)s"
     ],

@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsNotEmpty,
@@ -51,4 +52,29 @@ export class UpdateApplicationDto {
   @IsOptional()
   @IsEnum(ApplicationOutcome)
   outcome?: ApplicationOutcome;
+
+  @IsOptional()
+  @IsBoolean()
+  isTailored?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  hasAssignment?: boolean;
+
+  @IsOptional()
+  @ValidateIf((o, value) => value !== null)
+  @IsDateString()
+  interviewDate?: string | null;
+
+  @IsOptional()
+  prepChecklist?: Record<string, unknown> | unknown[] | null;
+
+  @IsOptional()
+  @ValidateIf((o, value) => value !== null)
+  @IsString()
+  interviewNotes?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  sharedWithGroup?: boolean;
 }

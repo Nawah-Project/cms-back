@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ApplicationsModule } from './applications/applications.module';
@@ -14,9 +15,11 @@ import { HealthController } from './health.controller';
 import { TasksModule } from './tasks/tasks.module';
 import { FeedbackModule } from './feedback/feedback.module';
 import { ObservabilityModule } from './observability/observability.module';
+import { JourneyEngineModule } from './journey-engine/journey-engine.module';
 
 @Module({
   imports: [
+    EventEmitterModule.forRoot({ wildcard: true, delimiter: '.' }),
     PrismaModule,
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
     AuthModule,
@@ -27,6 +30,7 @@ import { ObservabilityModule } from './observability/observability.module';
     TasksModule,
     FeedbackModule,
     ObservabilityModule,
+    JourneyEngineModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

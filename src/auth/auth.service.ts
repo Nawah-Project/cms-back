@@ -1,12 +1,14 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
+  Optional,
   UnauthorizedException,
 } from '@nestjs/common';
 import { AuthProvider, Prisma, UserRole } from '@prisma/client';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
-import { createHash, randomUUID, timingSafeEqual } from 'crypto';
+import { createHash, randomInt, randomUUID, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   ACCESS_TOKEN_SECRET,
@@ -18,12 +20,20 @@ import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { GroupAssignmentService } from '../members/group-assignment.service';
 import { AccountLinkRequiredError } from './social-auth.errors';
+import { EmailVerifierService } from './email-verifier.service';
+import { EmailSenderService } from './email-sender.service';
+
+export const OTP_TTL_MINUTES = 15;
+export const OTP_TTL_MS = OTP_TTL_MINUTES * 60 * 1000;
+export const OTP_RESEND_COOLDOWN_MS = 60 * 1000;
+export const OTP_MAX_ATTEMPTS = 5;
 
 export interface PublicUser {
   id: string;
   name: string;
   email: string;
   role?: UserRole;
+  emailVerified?: boolean;
 }
 
 export interface TokenPair {
@@ -33,11 +43,19 @@ export interface TokenPair {
 
 @Injectable()
 export class AuthService {
+  private readonly emailVerifier: EmailVerifierService;
+  private readonly emailSender: EmailSenderService;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly groupAssignment: GroupAssignmentService,
-  ) {}
+    @Optional() emailVerifier?: EmailVerifierService,
+    @Optional() emailSender?: EmailSenderService,
+  ) {
+    this.emailVerifier = emailVerifier ?? new EmailVerifierService();
+    this.emailSender = emailSender ?? new EmailSenderService();
+  }
 
   private hashRefreshToken(token: string): string {
     return createHash('sha256').update(token).digest('hex');
@@ -51,8 +69,39 @@ export class AuthService {
     );
   }
 
+  private generateOtpCode(): string {
+    return randomInt(100_000, 1_000_000).toString();
+  }
+
+  private hashOtpCode(code: string): string {
+    return createHash('sha256').update(code.trim()).digest('hex');
+  }
+
+  private matchesOtpCode(code: string, storedHash: string): boolean {
+    const candidate = Buffer.from(this.hashOtpCode(code), 'hex');
+    const stored = Buffer.from(storedHash, 'hex');
+    return (
+      candidate.length === stored.length && timingSafeEqual(candidate, stored)
+    );
+  }
+
+  private shouldRequireEmailOtp(): boolean {
+    return (
+      process.env.NODE_ENV !== 'production' ||
+      this.emailSender.isSmtpConfigured() ||
+      process.env.FORCE_EMAIL_OTP === 'true'
+    );
+  }
+
   private toPublicUser(user: PublicUser): PublicUser {
-    return { id: user.id, name: user.name, email: user.email, role: user.role };
+    const rawVerified = user.emailVerified ?? true;
+    return {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      emailVerified: this.shouldRequireEmailOtp() ? rawVerified : true,
+    };
   }
 
   private async issueTokens(user: PublicUser): Promise<TokenPair> {
@@ -88,24 +137,104 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
+  private shouldAssignGroupOnRegister(): boolean {
+    return (
+      process.env.ASSIGN_GROUP_ON_REGISTER?.trim().toLowerCase() === 'true'
+    );
+  }
+
+  private async ensureInitialJourneyState(
+    transaction: Prisma.TransactionClient,
+    userId: string,
+    isGroupUnlocked: boolean,
+  ): Promise<void> {
+    if (transaction.userJourneyState?.upsert) {
+      await transaction.userJourneyState.upsert({
+        where: { userId },
+        update: {},
+        create: {
+          userId,
+          currentWeek: 0,
+          currentNodeCode: 'TASK_0',
+          isGroupUnlocked,
+        },
+      });
+    } else if (transaction.userJourneyState?.create) {
+      await transaction.userJourneyState.create({
+        data: {
+          userId,
+          currentWeek: 0,
+          currentNodeCode: 'TASK_0',
+          isGroupUnlocked,
+        },
+      });
+    }
+  }
+
   async register(
     dto: RegisterDto,
   ): Promise<{ user: PublicUser; tokens: TokenPair }> {
     const email = dto.email.trim().toLowerCase();
+    await this.emailVerifier.validateEmailAddress(email);
+
     const passwordHash = await bcrypt.hash(dto.password, 12);
+    const assignOnRegister = this.shouldAssignGroupOnRegister();
+    const shouldRequireOtp =
+      process.env.NODE_ENV !== 'production' ||
+      this.emailSender.isSmtpConfigured() ||
+      process.env.FORCE_EMAIL_OTP === 'true';
+    const otpCode = this.generateOtpCode();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + OTP_TTL_MS);
+    const codeHash = shouldRequireOtp ? this.hashOtpCode(otpCode) : null;
+
     try {
       const user = await this.groupAssignment.withAssignmentLock(
         async (transaction) => {
           const created = await transaction.user.create({
-            data: { name: dto.name.trim(), email, passwordHash },
-            select: { id: true, name: true, email: true, role: true },
+            data: {
+              name: dto.name.trim(),
+              email,
+              passwordHash,
+              emailVerified: !shouldRequireOtp,
+              emailVerifiedAt: shouldRequireOtp ? null : now,
+              emailVerificationCodeHash: codeHash,
+              emailVerificationExpiresAt: shouldRequireOtp ? expiresAt : null,
+              emailVerificationSentAt: shouldRequireOtp ? now : null,
+              emailVerificationAttempts: 0,
+            },
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              role: true,
+              emailVerified: true,
+            },
           });
-          await this.groupAssignment.assignUser(transaction, created.id);
+          if (assignOnRegister) {
+            await this.groupAssignment.assignUser(transaction, created.id);
+          }
+          await this.ensureInitialJourneyState(
+            transaction,
+            created.id,
+            assignOnRegister,
+          );
           return created;
         },
       );
-      const tokens = await this.issueTokens(user);
-      return { user, tokens };
+
+      if (shouldRequireOtp) {
+        await this.emailSender.sendVerificationOtp({
+          to: user.email,
+          name: user.name,
+          code: otpCode,
+          expiresInMinutes: OTP_TTL_MINUTES,
+        });
+      }
+
+      const publicUser = this.toPublicUser(user);
+      const tokens = await this.issueTokens(publicUser);
+      return { user: publicUser, tokens };
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -128,6 +257,9 @@ export class AuthService {
         email: true,
         passwordHash: true,
         role: true,
+        emailVerified: true,
+        emailVerificationExpiresAt: true,
+        emailVerificationSentAt: true,
       },
     });
     if (
@@ -136,8 +268,163 @@ export class AuthService {
     ) {
       throw new UnauthorizedException('Invalid email or password');
     }
+
+    if (!user.emailVerified) {
+      const now = new Date();
+      const cooldownElapsed =
+        !user.emailVerificationSentAt ||
+        now.getTime() - user.emailVerificationSentAt.getTime() >=
+          OTP_RESEND_COOLDOWN_MS;
+      const codeExpired =
+        !user.emailVerificationExpiresAt ||
+        user.emailVerificationExpiresAt.getTime() <= now.getTime();
+
+      if (cooldownElapsed || codeExpired) {
+        const otpCode = this.generateOtpCode();
+        await this.prisma.user.update({
+          where: { id: user.id },
+          data: {
+            emailVerificationCodeHash: this.hashOtpCode(otpCode),
+            emailVerificationExpiresAt: new Date(now.getTime() + OTP_TTL_MS),
+            emailVerificationSentAt: now,
+            emailVerificationAttempts: 0,
+          },
+        });
+        await this.emailSender.sendVerificationOtp({
+          to: user.email,
+          name: user.name,
+          code: otpCode,
+          expiresInMinutes: OTP_TTL_MINUTES,
+        });
+      }
+    }
+
     const publicUser = this.toPublicUser(user);
     return { user: publicUser, tokens: await this.issueTokens(publicUser) };
+  }
+
+  async verifyEmail(userId: string, code: string): Promise<PublicUser> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        emailVerified: true,
+        emailVerificationCodeHash: true,
+        emailVerificationExpiresAt: true,
+        emailVerificationAttempts: true,
+      },
+    });
+    if (!user) throw new UnauthorizedException('Invalid session');
+    if (user.emailVerified) {
+      return this.toPublicUser(user);
+    }
+
+    if (user.emailVerificationAttempts >= OTP_MAX_ATTEMPTS) {
+      throw new BadRequestException(
+        'Too many failed attempts. Please request a new verification code.',
+      );
+    }
+
+    if (
+      !user.emailVerificationCodeHash ||
+      !user.emailVerificationExpiresAt ||
+      user.emailVerificationExpiresAt.getTime() < Date.now()
+    ) {
+      throw new BadRequestException(
+        'Verification code has expired. Please request a new one.',
+      );
+    }
+
+    if (!this.matchesOtpCode(code, user.emailVerificationCodeHash)) {
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          emailVerificationAttempts: { increment: 1 },
+        },
+      });
+      throw new BadRequestException('Invalid verification code');
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        emailVerified: true,
+        emailVerifiedAt: new Date(),
+        emailVerificationCodeHash: null,
+        emailVerificationExpiresAt: null,
+        emailVerificationAttempts: 0,
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        emailVerified: true,
+      },
+    });
+
+    return this.toPublicUser(updated);
+  }
+
+  async resendVerification(userId: string): Promise<{
+    sent: boolean;
+    emailVerified: boolean;
+    cooldownSeconds: number;
+  }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        emailVerified: true,
+        emailVerificationSentAt: true,
+      },
+    });
+    if (!user) throw new UnauthorizedException('Invalid session');
+    if (user.emailVerified) {
+      return { sent: false, emailVerified: true, cooldownSeconds: 0 };
+    }
+
+    const now = new Date();
+    if (user.emailVerificationSentAt) {
+      const elapsedMs = now.getTime() - user.emailVerificationSentAt.getTime();
+      if (elapsedMs < OTP_RESEND_COOLDOWN_MS) {
+        const remainingSeconds = Math.ceil(
+          (OTP_RESEND_COOLDOWN_MS - elapsedMs) / 1000,
+        );
+        throw new BadRequestException(
+          `Please wait ${remainingSeconds} seconds before requesting a new verification code`,
+        );
+      }
+    }
+
+    const otpCode = this.generateOtpCode();
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        emailVerificationCodeHash: this.hashOtpCode(otpCode),
+        emailVerificationExpiresAt: new Date(now.getTime() + OTP_TTL_MS),
+        emailVerificationSentAt: now,
+        emailVerificationAttempts: 0,
+      },
+    });
+
+    await this.emailSender.sendVerificationOtp({
+      to: user.email,
+      name: user.name,
+      code: otpCode,
+      expiresInMinutes: OTP_TTL_MINUTES,
+    });
+
+    return {
+      sent: true,
+      emailVerified: false,
+      cooldownSeconds: OTP_RESEND_COOLDOWN_MS / 1000,
+    };
   }
 
   async signInWithProvider(input: {
@@ -157,10 +444,38 @@ export class AuthService {
             },
           },
           include: {
-            user: { select: { id: true, name: true, email: true, role: true } },
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true,
+                emailVerified: true,
+              },
+            },
           },
         });
-        if (identity) return identity.user;
+        if (identity) {
+          if (!identity.user.emailVerified) {
+            return transaction.user.update({
+              where: { id: identity.user.id },
+              data: {
+                emailVerified: true,
+                emailVerifiedAt: new Date(),
+                emailVerificationCodeHash: null,
+                emailVerificationExpiresAt: null,
+              },
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true,
+                emailVerified: true,
+              },
+            });
+          }
+          return identity.user;
+        }
 
         if (!providerEmail) {
           throw new Error('The provider did not return a verified email');
@@ -177,8 +492,16 @@ export class AuthService {
             name: input.name?.trim() || providerEmail.split('@')[0],
             email: providerEmail,
             passwordHash: null,
+            emailVerified: true,
+            emailVerifiedAt: new Date(),
           },
-          select: { id: true, name: true, email: true, role: true },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            emailVerified: true,
+          },
         });
         await transaction.authIdentity.create({
           data: {
@@ -188,12 +511,21 @@ export class AuthService {
             providerEmail,
           },
         });
-        await this.groupAssignment.assignUser(transaction, createdUser.id);
+        const assignOnRegister = this.shouldAssignGroupOnRegister();
+        if (assignOnRegister) {
+          await this.groupAssignment.assignUser(transaction, createdUser.id);
+        }
+        await this.ensureInitialJourneyState(
+          transaction,
+          createdUser.id,
+          assignOnRegister,
+        );
         return createdUser;
       },
     );
 
-    return { user, tokens: await this.issueTokens(user) };
+    const publicUser = this.toPublicUser(user);
+    return { user: publicUser, tokens: await this.issueTokens(publicUser) };
   }
 
   async refresh(refreshToken?: string): Promise<TokenPair> {
@@ -218,6 +550,7 @@ export class AuthService {
         email: true,
         refreshTokenHash: true,
         role: true,
+        emailVerified: true,
       },
     });
     if (
@@ -262,10 +595,16 @@ export class AuthService {
   async me(userId: string): Promise<PublicUser> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, name: true, email: true, role: true },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        emailVerified: true,
+      },
     });
     if (!user) throw new UnauthorizedException('Invalid session');
-    return user;
+    return this.toPublicUser(user);
   }
 
   async verifyAccessToken(

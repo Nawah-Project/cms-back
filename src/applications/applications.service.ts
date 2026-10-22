@@ -2,7 +2,9 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   Application as DbApplication,
   ApplicationOutcome as DbApplicationOutcome,
@@ -56,7 +58,10 @@ export interface PaginatedApplications {
 
 @Injectable()
 export class ApplicationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly eventEmitter?: EventEmitter2,
+  ) {}
 
   private formatDate(dateStr?: string): string {
     if (!dateStr) return new Date().toISOString().split('T')[0];
@@ -99,7 +104,17 @@ export class ApplicationsService {
       );
     }
     this.validateStageAndOutcome(stage, outcome);
-    return this.prisma.application.create({
+
+    const journeyState = this.prisma?.userJourneyState?.findUnique
+      ? await this.prisma.userJourneyState.findUnique({
+          where: { userId },
+          select: { currentWeek: true },
+        })
+      : null;
+    const journeyWeek =
+      createDto.journeyWeek ?? journeyState?.currentWeek ?? 1;
+
+    const created = await this.prisma.application.create({
       data: {
         userId,
         companyName: createDto.companyName.trim(),
@@ -110,9 +125,35 @@ export class ApplicationsService {
         jobUrl: createDto.jobUrl?.trim() || null,
         stage,
         outcome,
+        isTailored: createDto.isTailored ?? false,
+        journeyWeek,
+        hasAssignment: createDto.hasAssignment ?? false,
+        interviewDate: createDto.interviewDate
+          ? new Date(createDto.interviewDate)
+          : null,
+        ...(createDto.prepChecklist !== undefined
+          ? { prepChecklist: createDto.prepChecklist as Prisma.InputJsonValue }
+          : {}),
+        interviewNotes: createDto.interviewNotes?.trim() || null,
+        sharedWithGroup: createDto.sharedWithGroup ?? false,
         closedAt: stage === ApplicationStage.CLOSED ? new Date() : null,
       },
     });
+
+    this.eventEmitter?.emit('application.created', {
+      userId,
+      applicationId: created.id,
+      companyName: created.companyName,
+      jobTitle: created.jobTitle,
+      stage: created.stage,
+      outcome: created.outcome,
+      isTailored: created.isTailored,
+      journeyWeek: created.journeyWeek,
+      hasAssignment: created.hasAssignment,
+      sharedWithGroup: created.sharedWithGroup,
+    });
+
+    return created;
   }
 
   async findAll(
@@ -256,12 +297,53 @@ export class ApplicationsService {
         data.closedAt =
           nextStage === ApplicationStage.CLOSED ? new Date() : null;
       }
+      if (
+        updateDto.isTailored !== undefined &&
+        updateDto.isTailored !== application.isTailored
+      ) {
+        data.isTailored = updateDto.isTailored;
+      }
+      if (
+        updateDto.hasAssignment !== undefined &&
+        updateDto.hasAssignment !== application.hasAssignment
+      ) {
+        data.hasAssignment = updateDto.hasAssignment;
+      }
+      if (updateDto.interviewDate !== undefined) {
+        const nextInterviewDate = updateDto.interviewDate
+          ? new Date(updateDto.interviewDate)
+          : null;
+        const prevInterviewTime = application.interviewDate?.getTime() ?? null;
+        const nextInterviewTime = nextInterviewDate?.getTime() ?? null;
+        if (prevInterviewTime !== nextInterviewTime) {
+          data.interviewDate = nextInterviewDate;
+        }
+      }
+      if (updateDto.prepChecklist !== undefined) {
+        data.prepChecklist =
+          updateDto.prepChecklist === null
+            ? Prisma.DbNull
+            : (updateDto.prepChecklist as Prisma.InputJsonValue);
+      }
+      if (updateDto.interviewNotes !== undefined) {
+        const interviewNotes = updateDto.interviewNotes?.trim() || null;
+        if (interviewNotes !== application.interviewNotes) {
+          data.interviewNotes = interviewNotes;
+        }
+      }
+      if (
+        updateDto.sharedWithGroup !== undefined &&
+        updateDto.sharedWithGroup !== application.sharedWithGroup
+      ) {
+        data.sharedWithGroup = updateDto.sharedWithGroup;
+      }
       if (Object.keys(data).length === 0) return application;
       const updated = await transaction.application.update({
         where: { id },
         data,
       });
-      if (previousStage.toString() !== nextStage.toString()) {
+      const stageChanged = previousStage.toString() !== nextStage.toString();
+      if (stageChanged) {
         await transaction.applicationStageTransition.create({
           data: {
             applicationId: application.id,
@@ -275,6 +357,32 @@ export class ApplicationsService {
           },
         });
       }
+
+      this.eventEmitter?.emit('application.updated', {
+        userId,
+        applicationId: updated.id,
+        companyName: updated.companyName,
+        jobTitle: updated.jobTitle,
+        stage: updated.stage,
+        outcome: updated.outcome,
+        hasAssignment: updated.hasAssignment,
+        isTailored: updated.isTailored,
+        sharedWithGroup: updated.sharedWithGroup,
+      });
+
+      if (stageChanged) {
+        this.eventEmitter?.emit('application.stage_changed', {
+          userId,
+          applicationId: updated.id,
+          fromStage: previousStage,
+          toStage: nextStage,
+          outcome:
+            nextStage === ApplicationStage.CLOSED
+              ? (nextOutcome as DbApplicationOutcome)
+              : null,
+        });
+      }
+
       return updated;
     });
   }

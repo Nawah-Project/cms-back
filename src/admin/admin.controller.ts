@@ -46,6 +46,11 @@ export class AdminController {
     return this.admin.getOverview();
   }
 
+  @Get('monitoring/attention')
+  getAttention(@Query() query: MonitoringActivityQueryDto) {
+    return this.admin.getAttention(query.limit);
+  }
+
   @Get('monitoring/users')
   getUsers(@Query() query: MonitoringQueryDto) {
     return this.admin.getUsers(query);

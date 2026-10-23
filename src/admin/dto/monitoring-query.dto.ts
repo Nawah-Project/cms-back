@@ -1,5 +1,14 @@
-import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import {
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 import {
   ADMIN_MONITORING_DEFAULT_LIMIT,
   ADMIN_MONITORING_MAX_LIMIT,
@@ -29,6 +38,23 @@ export class MonitoringQueryDto {
     NEVER_ACTIVE: 'NEVER_ACTIVE',
   })
   activityStatus?: ActivityStatus;
+
+  /** Free-text search on member name or email (case-insensitive). */
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @MaxLength(100)
+  search?: string;
+
+  /** Group UUID, or `UNASSIGNED` for members without a group. */
+  @IsOptional()
+  @IsString()
+  @Matches(
+    /^(UNASSIGNED|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
+  )
+  groupId?: string;
 }
 
 export class MonitoringActivityQueryDto {

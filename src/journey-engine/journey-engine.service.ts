@@ -354,6 +354,9 @@ export class JourneyEngineService implements OnModuleInit {
   async evaluateProgress(userId: string): Promise<UserJourneyState> {
     const state = await this.getOrCreateUserState(userId);
     const currentNode = await this.getNodeByCode(state.currentNodeCode);
+    const currentNodeAlreadyCompleted = (
+      state.completedNodeCodes ?? []
+    ).includes(state.currentNodeCode);
 
     if (!currentNode || currentNode.nodeType === JourneyNodeType.FINAL_REPORT) {
       return state;
@@ -372,13 +375,13 @@ export class JourneyEngineService implements OnModuleInit {
         ? counts.weeklyReviewCount >= 1
         : true;
 
-    if (
-      !appsSatisfied ||
-      !tailoredSatisfied ||
-      !postsSatisfied ||
-      !outreachSatisfied ||
-      !reviewSatisfied
-    ) {
+    const requirementsSatisfied =
+      appsSatisfied &&
+      tailoredSatisfied &&
+      postsSatisfied &&
+      outreachSatisfied &&
+      reviewSatisfied;
+    if (!currentNodeAlreadyCompleted && !requirementsSatisfied) {
       return state;
     }
 

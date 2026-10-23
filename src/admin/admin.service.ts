@@ -793,7 +793,7 @@ export class AdminService {
           days_in_node: number | null;
         }>
       >(
-        Prisma.sql`WITH ${this.journeyCte()} SELECT * FROM journey WHERE "userId" = ${userId}`,
+        Prisma.sql`WITH ${this.journeyCte()} SELECT * FROM journey WHERE "userId" = ${userId}::uuid`,
       ),
     ]);
     const journeyRow = journeyRows?.[0];

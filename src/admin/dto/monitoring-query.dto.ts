@@ -62,6 +62,12 @@ export class MonitoringActivityQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  page: number = 1;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
   @Max(ADMIN_MONITORING_MAX_LIMIT)
-  limit = ADMIN_MONITORING_DEFAULT_LIMIT;
+  limit: number = ADMIN_MONITORING_DEFAULT_LIMIT;
 }

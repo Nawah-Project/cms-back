@@ -475,11 +475,23 @@ export class AdminService {
     };
   }
 
-  async getActivity(requestedLimit = ADMIN_MONITORING_DEFAULT_LIMIT) {
+  async getActivity(
+    requestedPage = 1,
+    requestedLimit = ADMIN_MONITORING_DEFAULT_LIMIT,
+  ) {
+    const page = Math.max(1, Math.floor(requestedPage || 1));
     const limit = this.boundedLimit(requestedLimit);
+    const maxFetch = Math.min(1000, Math.max(limit * page, 100));
+    const all = await this.queryActivity({}, maxFetch);
+    const total = all.length;
+    const offset = (page - 1) * limit;
+    const items = all.slice(offset, offset + limit);
     return {
-      items: await this.queryActivity({}, limit),
+      items,
+      total,
+      page,
       limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
     };
   }
 

@@ -63,7 +63,7 @@ export class AdminController {
 
   @Get('monitoring/activity')
   getActivity(@Query() query: MonitoringActivityQueryDto) {
-    return this.admin.getActivity(query.limit);
+    return this.admin.getActivity(query.page, query.limit);
   }
 
   @Get('monitoring/users/:userId')

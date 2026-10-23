@@ -45,6 +45,54 @@ type ActivityItem = {
   createdAt: string;
 };
 
+type MemberRow = {
+  id: string;
+  name: string;
+  email?: string | null;
+  role: UserRole;
+  groupId: string | null;
+  groupName: string | null;
+  emailVerified?: boolean | null;
+  registeredAt?: Date | null;
+  profileComplete?: boolean | null;
+  lastActivityAt: Date | null;
+  inactivityDays: number | null;
+  activityStatus: ActivityState['activityStatus'];
+  applicationsCount: number;
+  applied: number;
+  interview: number;
+  decision: number;
+  closed: number;
+  activeTasks: number | null;
+  inProgressTasks: number | null;
+  overdueTasks: number | null;
+  lastTaskAt: Date | null;
+  journeyNodeCode?: string | null;
+  journeyWeek?: number | null;
+  journeyNodeStartedAt?: Date | null;
+  journeyCompletedNodes?: number | null;
+  journeyRequiredApps?: number | null;
+  journeyNodeApps?: number | null;
+  journeyNodeTitleAr?: string | null;
+  journeyNodeTitleEn?: string | null;
+  journeyDaysInNode?: number | null;
+};
+
+type AttentionReason = {
+  code:
+    | 'JOURNEY_NOT_STARTED'
+    | 'JOURNEY_STALLED'
+    | 'OVERDUE_TASKS'
+    | 'PROFILE_INCOMPLETE'
+    | 'INACTIVE';
+  severity: number;
+  days?: number;
+  count?: number;
+};
+
+const ATTENTION_NOT_STARTED_DAYS = 2;
+const ATTENTION_STALLED_DAYS = 3;
+
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
@@ -77,7 +125,10 @@ export class AdminService {
       SELECT "userId", MAX("updatedAt") AS last_at
       FROM professional_tasks GROUP BY "userId"
     ), latest_activity AS (
-      SELECT u.id, u.name, u.role, m."groupId", g.name AS "groupName",
+      SELECT u.id, u.name, u.email, u.role, u."emailVerified" AS email_verified,
+        u."createdAt" AS registered_at, u."portfolioUrl" AS portfolio_url,
+        EXISTS (SELECT 1 FROM user_cvs cv WHERE cv."userId" = u.id) AS has_cv,
+        m."groupId", g.name AS "groupName",
         GREATEST(a.last_at, t.last_at, tk.last_at) AS last_at
       FROM users u
       LEFT JOIN memberships m ON m."userId" = u.id
@@ -103,64 +154,37 @@ export class AdminService {
     )`;
   }
 
-  async getOverview() {
-    const [overview] = await this.prisma.$queryRaw<
-      Array<{
-        usersCount: number;
-        groupsCount: number;
-        membershipsCount: number;
-        unassignedUsersCount: number;
-        activeUsersCount: number;
-        warningUsersCount: number;
-        criticalUsersCount: number;
-        neverActiveUsersCount: number;
-        applicationsCount: number;
-      }>
-    >(Prisma.sql`${this.userActivityCte()}
-      SELECT COUNT(*)::int AS "usersCount",
-        (SELECT COUNT(*)::int FROM member_groups) AS "groupsCount",
-        COUNT(*) FILTER (WHERE "groupId" IS NOT NULL)::int AS "membershipsCount",
-        COUNT(*) FILTER (WHERE "groupId" IS NULL)::int AS "unassignedUsersCount",
-        COUNT(*) FILTER (WHERE activity_status = 'ACTIVE')::int AS "activeUsersCount",
-        COUNT(*) FILTER (WHERE activity_status = 'WARNING')::int AS "warningUsersCount",
-        COUNT(*) FILTER (WHERE activity_status = 'CRITICAL')::int AS "criticalUsersCount",
-        COUNT(*) FILTER (WHERE activity_status = 'NEVER_ACTIVE')::int AS "neverActiveUsersCount",
-        (SELECT COUNT(*)::int FROM applications) AS "applicationsCount"
-      FROM classified`);
-    return {
-      ...overview,
-    };
+  /**
+   * Journey Engine snapshot per regular user. Users that never opened the new
+   * journey (no `user_journey_states` row) are reported at `TASK_0` with zero
+   * progress so admins can still see them as "not started".
+   */
+  private journeyCte(): Prisma.Sql {
+    return Prisma.sql`journey AS (
+      SELECT u.id AS "userId",
+        COALESCE(js."currentNodeCode", 'TASK_0') AS node_code,
+        COALESCE(js."currentWeek", 0) AS journey_week,
+        js."currentNodeStartedAt" AS node_started_at,
+        COALESCE(array_length(js."completedNodeCodes", 1), 0) AS completed_nodes,
+        COALESCE(jn."requiredAppsCount", 5) AS node_required_apps,
+        jn."titleAr" AS node_title_ar,
+        jn."titleEn" AS node_title_en,
+        CASE WHEN js."currentNodeStartedAt" IS NULL THEN 0
+          ELSE (SELECT COUNT(*)::int FROM applications ap
+            WHERE ap."userId" = u.id AND ap."createdAt" >= js."currentNodeStartedAt")
+        END AS node_apps,
+        CASE WHEN js."currentNodeStartedAt" IS NULL THEN NULL
+          ELSE GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - js."currentNodeStartedAt")) / 86400)::int)
+        END AS days_in_node
+      FROM users u
+      LEFT JOIN user_journey_states js ON js."userId" = u.id
+      LEFT JOIN journey_nodes jn ON jn.code = COALESCE(js."currentNodeCode", 'TASK_0')
+      WHERE u.role = 'USER'::"UserRole"
+    )`;
   }
 
-  async getUsers(query: MonitoringQueryDto) {
-    const page = Math.max(1, Math.floor(query.page || 1));
-    const limit = this.boundedLimit(query.limit);
-    const statusFilter = query.activityStatus
-      ? Prisma.sql`WHERE c.activity_status = ${query.activityStatus}`
-      : Prisma.empty;
-    const offset = (page - 1) * limit;
-    const [rows, totals] = await Promise.all([
-      this.prisma.$queryRaw<
-        Array<{
-          id: string;
-          name: string;
-          role: UserRole;
-          groupId: string | null;
-          groupName: string | null;
-          lastActivityAt: Date | null;
-          inactivityDays: number | null;
-          activityStatus: ActivityState['activityStatus'];
-          applicationsCount: number;
-          applied: number;
-          interview: number;
-          decision: number;
-          closed: number;
-          activeTasks: number | null;
-          inProgressTasks: number | null;
-          overdueTasks: number | null;
-          lastTaskAt: Date | null;
-        }>
-      >(Prisma.sql`${this.userActivityCte()}, application_counts AS (
+  private memberRowsCte(): Prisma.Sql {
+    return Prisma.sql`${this.userActivityCte()}, ${this.journeyCte()}, application_counts AS (
         SELECT "userId", COUNT(*)::int AS total,
           COUNT(*) FILTER (WHERE stage = 'APPLIED')::int AS applied,
           COUNT(*) FILTER (WHERE stage = 'INTERVIEW')::int AS interview,
@@ -174,53 +198,247 @@ export class AdminService {
           COUNT(*) FILTER (WHERE status <> 'DONE'::"TaskStatus" AND "dueDate" < CURRENT_TIMESTAMP)::int AS "overdueTasks",
           MAX("updatedAt") AS "lastTaskAt"
         FROM professional_tasks GROUP BY "userId"
-      )
-      SELECT c.id, c.name, c.role, c."groupId", c."groupName",
+      )`;
+  }
+
+  private memberRowsSelect(): Prisma.Sql {
+    return Prisma.sql`SELECT c.id, c.name, c.email, c.role, c."groupId", c."groupName",
+        c.email_verified AS "emailVerified", c.registered_at AS "registeredAt",
+        (c.portfolio_url IS NOT NULL AND c.has_cv) AS "profileComplete",
         c.last_at AS "lastActivityAt", c.inactivity_days AS "inactivityDays",
         c.activity_status AS "activityStatus", COALESCE(a.total, 0)::int AS "applicationsCount",
         COALESCE(a.applied, 0)::int AS applied, COALESCE(a.interview, 0)::int AS interview,
         COALESCE(a.decision, 0)::int AS decision, COALESCE(a.closed, 0)::int AS closed,
-        d."activeTasks", d."inProgressTasks", d."overdueTasks", d."lastTaskAt"
+        d."activeTasks", d."inProgressTasks", d."overdueTasks", d."lastTaskAt",
+        j.node_code AS "journeyNodeCode", j.journey_week AS "journeyWeek",
+        j.node_started_at AS "journeyNodeStartedAt", j.completed_nodes AS "journeyCompletedNodes",
+        j.node_required_apps AS "journeyRequiredApps", j.node_apps AS "journeyNodeApps",
+        j.node_title_ar AS "journeyNodeTitleAr", j.node_title_en AS "journeyNodeTitleEn",
+        j.days_in_node AS "journeyDaysInNode"
       FROM classified c
       LEFT JOIN application_counts a ON a."userId" = c.id
       LEFT JOIN development_counts d ON d."userId" = c.id
-      ${statusFilter}
+      LEFT JOIN journey j ON j."userId" = c.id`;
+  }
+
+  private memberFilters(query: Partial<MonitoringQueryDto>): Prisma.Sql {
+    const conditions: Prisma.Sql[] = [];
+    if (query.activityStatus) {
+      conditions.push(Prisma.sql`c.activity_status = ${query.activityStatus}`);
+    }
+    const search = query.search?.trim();
+    if (search) {
+      const pattern = `%${search.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+      conditions.push(
+        Prisma.sql`(c.name ILIKE ${pattern} OR c.email ILIKE ${pattern})`,
+      );
+    }
+    if (query.groupId === 'UNASSIGNED') {
+      conditions.push(Prisma.sql`c."groupId" IS NULL`);
+    } else if (query.groupId) {
+      conditions.push(Prisma.sql`c."groupId" = ${query.groupId}::uuid`);
+    }
+    return conditions.length
+      ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`
+      : Prisma.empty;
+  }
+
+  private mapMemberRow(row: MemberRow) {
+    return {
+      id: row.id,
+      name: row.name,
+      email: row.email ?? null,
+      role: row.role,
+      emailVerified: row.emailVerified ?? null,
+      registeredAt: row.registeredAt?.toISOString() ?? null,
+      profileComplete: row.profileComplete ?? null,
+      group: row.groupId ? { id: row.groupId, name: row.groupName! } : null,
+      lastActivityAt: row.lastActivityAt?.toISOString() ?? null,
+      inactivityDays: row.inactivityDays,
+      activityStatus: row.activityStatus,
+      applicationsCount: row.applicationsCount,
+      currentStageCounts: {
+        applied: row.applied,
+        interview: row.interview,
+        decision: row.decision,
+        closed: row.closed,
+      },
+      development: {
+        active: row.activeTasks ?? 0,
+        inProgress: row.inProgressTasks ?? 0,
+        overdue: row.overdueTasks ?? 0,
+        lastTaskAt: row.lastTaskAt?.toISOString() ?? null,
+      },
+      journey: row.journeyNodeCode
+        ? {
+            nodeCode: row.journeyNodeCode,
+            week: row.journeyWeek ?? 0,
+            started: Boolean(row.journeyNodeStartedAt),
+            nodeStartedAt: row.journeyNodeStartedAt?.toISOString() ?? null,
+            completedNodes: row.journeyCompletedNodes ?? 0,
+            requiredApps: row.journeyRequiredApps ?? 0,
+            nodeApps: row.journeyNodeApps ?? 0,
+            titleAr: row.journeyNodeTitleAr ?? null,
+            titleEn: row.journeyNodeTitleEn ?? null,
+            daysInNode: row.journeyDaysInNode ?? null,
+          }
+        : null,
+      avatar: null,
+    };
+  }
+
+  async getOverview() {
+    const [[overview], funnelRows] = await Promise.all([
+      this.prisma.$queryRaw<
+        Array<{
+          usersCount: number;
+          groupsCount: number;
+          membershipsCount: number;
+          unassignedUsersCount: number;
+          activeUsersCount: number;
+          warningUsersCount: number;
+          criticalUsersCount: number;
+          neverActiveUsersCount: number;
+          applicationsCount: number;
+        }>
+      >(Prisma.sql`${this.userActivityCte()}
+      SELECT COUNT(*)::int AS "usersCount",
+        (SELECT COUNT(*)::int FROM member_groups) AS "groupsCount",
+        COUNT(*) FILTER (WHERE "groupId" IS NOT NULL)::int AS "membershipsCount",
+        COUNT(*) FILTER (WHERE "groupId" IS NULL)::int AS "unassignedUsersCount",
+        COUNT(*) FILTER (WHERE activity_status = 'ACTIVE')::int AS "activeUsersCount",
+        COUNT(*) FILTER (WHERE activity_status = 'WARNING')::int AS "warningUsersCount",
+        COUNT(*) FILTER (WHERE activity_status = 'CRITICAL')::int AS "criticalUsersCount",
+        COUNT(*) FILTER (WHERE activity_status = 'NEVER_ACTIVE')::int AS "neverActiveUsersCount",
+        (SELECT COUNT(*)::int FROM applications) AS "applicationsCount"
+      FROM classified`),
+      this.prisma.$queryRaw<
+        Array<{
+          week: number;
+          members: number;
+          notStarted: number;
+          finished: number;
+        }>
+      >(Prisma.sql`WITH ${this.journeyCte()}
+        SELECT journey_week AS week, COUNT(*)::int AS members,
+          COUNT(*) FILTER (WHERE node_code = 'TASK_0' AND node_apps = 0)::int AS "notStarted",
+          COUNT(*) FILTER (WHERE node_code = 'FINAL_REPORT')::int AS finished
+        FROM journey GROUP BY journey_week ORDER BY journey_week`),
+    ]);
+    const weeks = [0, 1, 2, 3, 4].map((week) => {
+      const row = (funnelRows ?? []).find((item) => item.week === week);
+      return { week, members: row?.members ?? 0 };
+    });
+    const rows = funnelRows ?? [];
+    const notStarted = rows.reduce((sum, row) => sum + row.notStarted, 0);
+    const finished = rows.reduce((sum, row) => sum + row.finished, 0);
+    const total = rows.reduce((sum, row) => sum + row.members, 0);
+    return {
+      ...overview,
+      journey: {
+        weeks,
+        notStartedCount: notStarted,
+        startedCount: Math.max(0, total - notStarted),
+        finishedCount: finished,
+      },
+    };
+  }
+
+  async getUsers(query: MonitoringQueryDto) {
+    const page = Math.max(1, Math.floor(query.page || 1));
+    const limit = this.boundedLimit(query.limit);
+    const where = this.memberFilters(query);
+    const offset = (page - 1) * limit;
+    const [rows, totals] = await Promise.all([
+      this.prisma.$queryRaw<MemberRow[]>(Prisma.sql`${this.memberRowsCte()}
+      ${this.memberRowsSelect()}
+      ${where}
       ORDER BY c.last_at DESC NULLS LAST, c.name ASC, c.id ASC
       OFFSET ${offset} LIMIT ${limit}`),
       this.prisma.$queryRaw<
         Array<{ total: number }>
       >(Prisma.sql`${this.userActivityCte()}
-        SELECT COUNT(*)::int AS total FROM classified c ${statusFilter}`),
+        SELECT COUNT(*)::int AS total FROM classified c ${where}`),
     ]);
     const total = totals[0]?.total ?? 0;
     return {
-      items: rows.map((row) => ({
-        id: row.id,
-        name: row.name,
-        role: row.role,
-        group: row.groupId ? { id: row.groupId, name: row.groupName! } : null,
-        lastActivityAt: row.lastActivityAt?.toISOString() ?? null,
-        inactivityDays: row.inactivityDays,
-        activityStatus: row.activityStatus,
-        applicationsCount: row.applicationsCount,
-        currentStageCounts: {
-          applied: row.applied,
-          interview: row.interview,
-          decision: row.decision,
-          closed: row.closed,
-        },
-        development: {
-          active: row.activeTasks ?? 0,
-          inProgress: row.inProgressTasks ?? 0,
-          overdue: row.overdueTasks ?? 0,
-          lastTaskAt: row.lastTaskAt?.toISOString() ?? null,
-        },
-        avatar: null,
-      })),
+      items: rows.map((row) => this.mapMemberRow(row)),
       total,
       page,
       limit,
       totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  /**
+   * Members who need a mentor intervention right now, ordered by severity.
+   * Reasons are computed from the journey state, overdue tasks and profile.
+   */
+  async getAttention(limit = 25) {
+    const rows = await this.prisma.$queryRaw<MemberRow[]>(
+      Prisma.sql`${this.memberRowsCte()}
+      ${this.memberRowsSelect()}
+      ORDER BY c.name ASC LIMIT 1000`,
+    );
+    const now = Date.now();
+    const items = rows
+      .map((row) => {
+        const member = this.mapMemberRow(row);
+        const reasons: AttentionReason[] = [];
+        const journey = member.journey;
+        const daysSinceRegistration = row.registeredAt
+          ? Math.floor((now - row.registeredAt.getTime()) / 86_400_000)
+          : 0;
+        if (!member.profileComplete) {
+          reasons.push({ code: 'PROFILE_INCOMPLETE', severity: 2 });
+        }
+        if (journey && journey.nodeCode !== 'FINAL_REPORT') {
+          const notStarted =
+            journey.nodeCode === 'TASK_0' && journey.nodeApps === 0;
+          const idleDays = journey.daysInNode ?? daysSinceRegistration;
+          if (notStarted && idleDays >= ATTENTION_NOT_STARTED_DAYS) {
+            reasons.push({
+              code: 'JOURNEY_NOT_STARTED',
+              severity: 3,
+              days: idleDays,
+            });
+          } else if (
+            !notStarted &&
+            (journey.daysInNode ?? 0) >= ATTENTION_STALLED_DAYS &&
+            journey.nodeApps < journey.requiredApps
+          ) {
+            reasons.push({
+              code: 'JOURNEY_STALLED',
+              severity: 4,
+              days: journey.daysInNode ?? 0,
+            });
+          }
+        }
+        if (member.development.overdue > 0) {
+          reasons.push({
+            code: 'OVERDUE_TASKS',
+            severity: 3,
+            count: member.development.overdue,
+          });
+        }
+        if (member.activityStatus === 'CRITICAL') {
+          reasons.push({
+            code: 'INACTIVE',
+            severity: 4,
+            days: member.inactivityDays ?? 0,
+          });
+        }
+        const score = reasons.reduce((sum, reason) => sum + reason.severity, 0);
+        return { member, reasons, score };
+      })
+      .filter((item) => item.reasons.length > 0)
+      .sort(
+        (a, b) =>
+          b.score - a.score || a.member.name.localeCompare(b.member.name),
+      );
+    return {
+      total: items.length,
+      items: items.slice(0, Math.min(100, Math.max(1, limit))),
     };
   }
 
@@ -257,11 +475,23 @@ export class AdminService {
     };
   }
 
-  async getActivity(requestedLimit = ADMIN_MONITORING_DEFAULT_LIMIT) {
+  async getActivity(
+    requestedPage = 1,
+    requestedLimit = ADMIN_MONITORING_DEFAULT_LIMIT,
+  ) {
+    const page = Math.max(1, Math.floor(requestedPage || 1));
     const limit = this.boundedLimit(requestedLimit);
+    const maxFetch = Math.min(1000, Math.max(limit * page, 100));
+    const all = await this.queryActivity({}, maxFetch);
+    const total = all.length;
+    const offset = (page - 1) * limit;
+    const items = all.slice(offset, offset + limit);
     return {
-      items: await this.queryActivity({}, limit),
+      items,
+      total,
+      page,
       limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
     };
   }
 
@@ -436,6 +666,9 @@ export class AdminService {
           name: true,
           email: true,
           role: true,
+          emailVerified: true,
+          targetJobTitle: true,
+          preferredLocations: true,
           createdAt: true,
           portfolioUrl: true,
           cv: { select: { id: true } },
@@ -520,41 +753,78 @@ export class AdminService {
       taskStatusCounts.TODO +
       taskStatusCounts.IN_PROGRESS +
       taskStatusCounts.BLOCKED;
-    const [overdueTasks, mentorPriorityTasks, unreadMentorFeedback] =
-      await Promise.all([
-        this.prisma.task.count({
-          where: {
-            userId,
-            status: { not: TaskStatus.DONE },
-            dueDate: { lt: new Date() },
-          },
-        }),
-        this.prisma.task.count({
-          where: {
-            userId,
-            status: { not: TaskStatus.DONE },
-            mentorPriority: true,
-          },
-        }),
-        this.prisma.taskNote.count({
-          where: {
-            type: TaskNoteType.MENTOR_FEEDBACK,
-            readAt: null,
-            task: { userId },
-          },
-        }),
-      ]);
+    const [
+      overdueTasks,
+      mentorPriorityTasks,
+      unreadMentorFeedback,
+      journeyRows,
+    ] = await Promise.all([
+      this.prisma.task.count({
+        where: {
+          userId,
+          status: { not: TaskStatus.DONE },
+          dueDate: { lt: new Date() },
+        },
+      }),
+      this.prisma.task.count({
+        where: {
+          userId,
+          status: { not: TaskStatus.DONE },
+          mentorPriority: true,
+        },
+      }),
+      this.prisma.taskNote.count({
+        where: {
+          type: TaskNoteType.MENTOR_FEEDBACK,
+          readAt: null,
+          task: { userId },
+        },
+      }),
+      this.prisma.$queryRaw<
+        Array<{
+          node_code: string;
+          journey_week: number;
+          node_started_at: Date | null;
+          completed_nodes: number;
+          node_required_apps: number;
+          node_apps: number;
+          node_title_ar: string | null;
+          node_title_en: string | null;
+          days_in_node: number | null;
+        }>
+      >(
+        Prisma.sql`WITH ${this.journeyCte()} SELECT * FROM journey WHERE "userId" = ${userId}::uuid`,
+      ),
+    ]);
+    const journeyRow = journeyRows?.[0];
     return {
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
         role: user.role,
+        emailVerified: user.emailVerified ?? false,
+        targetJobTitle: user.targetJobTitle ?? null,
+        preferredLocations: user.preferredLocations ?? [],
         createdAt: user.createdAt.toISOString(),
         portfolioUrl: user.portfolioUrl,
         hasCv: Boolean(user.cv),
         group: user.membership?.group ?? null,
       },
+      journey: journeyRow
+        ? {
+            nodeCode: journeyRow.node_code,
+            week: journeyRow.journey_week,
+            started: Boolean(journeyRow.node_started_at),
+            nodeStartedAt: journeyRow.node_started_at?.toISOString() ?? null,
+            completedNodes: journeyRow.completed_nodes,
+            requiredApps: journeyRow.node_required_apps,
+            nodeApps: journeyRow.node_apps,
+            titleAr: journeyRow.node_title_ar,
+            titleEn: journeyRow.node_title_en,
+            daysInNode: journeyRow.days_in_node,
+          }
+        : null,
       lastActivityAt: lastActivityAt?.toISOString() ?? null,
       ...activityState,
       applicationsCount: appStats._count._all,

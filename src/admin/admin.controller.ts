@@ -46,6 +46,11 @@ export class AdminController {
     return this.admin.getOverview();
   }
 
+  @Get('monitoring/attention')
+  getAttention(@Query() query: MonitoringActivityQueryDto) {
+    return this.admin.getAttention(query.limit);
+  }
+
   @Get('monitoring/users')
   getUsers(@Query() query: MonitoringQueryDto) {
     return this.admin.getUsers(query);
@@ -58,7 +63,7 @@ export class AdminController {
 
   @Get('monitoring/activity')
   getActivity(@Query() query: MonitoringActivityQueryDto) {
-    return this.admin.getActivity(query.limit);
+    return this.admin.getActivity(query.page, query.limit);
   }
 
   @Get('monitoring/users/:userId')

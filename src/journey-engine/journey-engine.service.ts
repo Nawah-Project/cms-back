@@ -382,6 +382,20 @@ export class JourneyEngineService implements OnModuleInit {
       return state;
     }
 
+    const nextNodeCode = currentNode.nextNodeCode ?? currentNode.code;
+    const nextNode = currentNode.nextNodeCode
+      ? await this.getNodeByCode(currentNode.nextNodeCode)
+      : null;
+
+    // A quest is completed only after its requirements are met, and its
+    // successor is unlocked only when both the requirements and schedule allow
+    // it. Keep the completed quest selected while waiting for the next day.
+    // Administrators bypass the calendar gate, but not quest requirements.
+    const account = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
+    });
+
     const completedNodeCodes = Array.from(
       new Set([...(state.completedNodeCodes ?? []), currentNode.code]),
     );
@@ -426,10 +440,35 @@ export class JourneyEngineService implements OnModuleInit {
       canUseTableView = true;
     }
 
-    const nextNodeCode = currentNode.nextNodeCode ?? currentNode.code;
-    const nextNode = currentNode.nextNodeCode
-      ? await this.getNodeByCode(currentNode.nextNodeCode)
-      : null;
+    if (
+      account?.role !== 'ADMIN' &&
+      nextNode &&
+      nextNode.weekNumber === currentNode.weekNumber
+    ) {
+      const weekNodes = (await this.getAllNodes())
+        .filter((node) => node.weekNumber === nextNode.weekNumber)
+        .sort((a, b) => a.orderIndex - b.orderIndex);
+      const elapsedDaysBeforeNextNode = weekNodes
+        .filter((node) => node.orderIndex < nextNode.orderIndex)
+        .reduce((days, node) => days + node.durationDays, 0);
+      const nextNodeAvailableAt = new Date(
+        state.weekStartedAt.getTime() +
+          elapsedDaysBeforeNextNode * 86_400_000,
+      );
+
+      if (Date.now() < nextNodeAvailableAt.getTime()) {
+        return this.prisma.userJourneyState.update({
+          where: { userId },
+          data: {
+            completedNodeCodes,
+            unlockedInsightCodes,
+            isGroupUnlocked,
+            canUseTableView,
+          },
+        });
+      }
+    }
+
     const nextWeek = nextNode ? nextNode.weekNumber : state.currentWeek;
     const now = new Date();
     const weekStartedAt =
@@ -582,7 +621,7 @@ export class JourneyEngineService implements OnModuleInit {
   }
 
   async getJourneyStateSummary(userId: string): Promise<JourneyStateResponse> {
-    const state = await this.getOrCreateUserState(userId);
+    const state = await this.evaluateProgress(userId);
     const allNodes = await this.getAllNodes();
     const currentNodeRaw =
       allNodes.find((n) => n.code === state.currentNodeCode) ??

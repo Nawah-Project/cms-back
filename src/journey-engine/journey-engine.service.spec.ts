@@ -137,6 +137,7 @@ describe('JourneyEngineService (Journey V4 State Machine)', () => {
         ...currentState,
         currentWeek: 1,
         currentNodeCode: 'W1_M1',
+        weekStartedAt: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000),
         completedNodeCodes: ['TASK_0'],
         unlockedInsightCodes: ['INSIGHT_TASK_0_CV_BASE'],
         isGroupUnlocked: true,
@@ -188,6 +189,43 @@ describe('JourneyEngineService (Journey V4 State Machine)', () => {
       expect(statusByCode.get('W1_M5')).toBe('COMPLETED');
       expect(statusByCode.get('W1_REVIEW')).toBe('ACTIVE');
       expect(statusByCode.get('W2_M1')).toBe('LOCKED_BLURRED');
+    });
+
+    it('requires both the previous quest and its scheduled day before unlocking the next quest', async () => {
+      const weekStartedAt = new Date();
+      currentState = {
+        ...currentState,
+        currentNodeCode: 'W1_M1',
+        currentNodeStartedAt: weekStartedAt,
+        weekStartedAt,
+      };
+      prisma.application.count.mockResolvedValue(10);
+
+      let state = await service.evaluateProgress('user-1');
+      expect(state.currentNodeCode).toBe('W1_M1');
+      expect(state.completedNodeCodes).toContain('W1_M1');
+
+      currentState.weekStartedAt = new Date(
+        weekStartedAt.getTime() - 24 * 60 * 60 * 1000,
+      );
+      state = await service.evaluateProgress('user-1');
+      expect(state.currentNodeCode).toBe('W1_M2');
+    });
+
+    it('lets administrators bypass the schedule while retaining quest requirements', async () => {
+      currentState = {
+        ...currentState,
+        currentNodeCode: 'W1_M1',
+        currentNodeStartedAt: new Date(),
+        weekStartedAt: new Date(),
+      };
+      prisma.user.findUnique.mockResolvedValue({ role: 'ADMIN' });
+      prisma.application.count.mockResolvedValue(10);
+
+      const state = await service.evaluateProgress('user-1');
+
+      expect(state.currentNodeCode).toBe('W1_M2');
+      expect(state.completedNodeCodes).toContain('W1_M1');
     });
   });
 

@@ -816,12 +816,21 @@ export class JourneyEngineService implements OnModuleInit {
 
     const encodedTitle = encodeURIComponent(targetJobTitle);
     const encodedLocation = encodeURIComponent(location);
+    const slugifiedTitle = targetJobTitle
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '');
+    const isRemote =
+      !location ||
+      location.toLowerCase() === 'remote' ||
+      location === 'عن بُعد' ||
+      location === 'عن بعد';
 
     const platforms: JobMarketCompassPlatform[] = [
       {
         id: 'linkedin',
         name: 'LinkedIn Jobs',
-        url: `https://www.linkedin.com/jobs/search/?keywords=${encodedTitle}&location=${encodedLocation}`,
+        url: `https://www.linkedin.com/jobs/search/?keywords=${encodedTitle}&location=${encodedLocation}${isRemote ? '&f_WT=2' : ''}`,
         descriptionAr: 'البحث المباشر عن الوظائف الحديثة على LinkedIn',
         descriptionEn: 'Direct search for recent jobs on LinkedIn',
       },
@@ -842,14 +851,14 @@ export class JourneyEngineService implements OnModuleInit {
       {
         id: 'wellfound',
         name: 'Wellfound (AngelList)',
-        url: `https://wellfound.com/jobs?q=${encodedTitle}`,
+        url: `https://wellfound.com/role/r/${slugifiedTitle}`,
         descriptionAr: 'وظائف الشركات الناشئة والتقنية العالمية',
         descriptionEn: 'Global startup and tech opportunities',
       },
       {
         id: 'remoteok',
         name: 'RemoteOK',
-        url: `https://remoteok.com/remote-jobs?search=${encodedTitle}`,
+        url: `https://remoteok.com/remote-${slugifiedTitle}-jobs`,
         descriptionAr: 'وظائف العمل عن بُعد حول العالم',
         descriptionEn: 'Worldwide remote job listings',
       },

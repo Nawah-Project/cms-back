@@ -111,6 +111,7 @@ export class ProfileService
         id: true,
         name: true,
         portfolioUrl: true,
+        targetJobTitle: true,
         cv: {
           select: {
             id: true,
@@ -128,9 +129,12 @@ export class ProfileService
       id: user.id,
       name: user.name,
       portfolioUrl: user.portfolioUrl,
+      targetJobTitle: user.targetJobTitle ?? null,
       cv,
       hasCv: cv !== null,
-      profileComplete: Boolean(user.portfolioUrl && cv),
+      profileComplete: Boolean(
+        user.portfolioUrl && cv && user.targetJobTitle?.trim(),
+      ),
     };
   }
 
@@ -138,13 +142,21 @@ export class ProfileService
     userId: string,
     portfolioUrl?: string | null,
     name?: string,
+    targetJobTitle?: string | null,
   ) {
-    if (portfolioUrl !== undefined || name !== undefined) {
+    if (
+      portfolioUrl !== undefined ||
+      name !== undefined ||
+      targetJobTitle !== undefined
+    ) {
       const data: Prisma.UserUpdateInput = {};
       if (portfolioUrl !== undefined) {
         data.portfolioUrl = portfolioUrl?.trim() || null;
       }
       if (name !== undefined) data.name = name.trim();
+      if (targetJobTitle !== undefined) {
+        data.targetJobTitle = targetJobTitle?.trim() || null;
+      }
       await this.prisma.user.update({
         where: { id: userId },
         data,

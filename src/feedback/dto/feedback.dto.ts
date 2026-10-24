@@ -107,6 +107,10 @@ export class FeedbackQueryDto {
   @IsIn(['for-you', 'shared'])
   scope?: 'for-you' | 'shared';
 
+  @IsOptional()
+  @IsIn(['guidance', 'member'])
+  kind?: 'guidance' | 'member';
+
   @Type(() => Number)
   @IsOptional()
   @IsInt()
@@ -140,4 +144,8 @@ export class AdminFeedbackQueryDto {
   @IsOptional()
   @IsString()
   archived?: string;
+
+  @IsOptional()
+  @IsIn(['guidance', 'member'])
+  kind?: 'guidance' | 'member';
 }

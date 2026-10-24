@@ -25,4 +25,12 @@ export class UpdateProfileDto {
   @MaxLength(2048)
   @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
   portfolioUrl?: string | null;
+
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim() === '' ? null : value,
+  )
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  targetJobTitle?: string | null;
 }

@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnApplicationBootstrap,
 } from '@nestjs/common';
 import {
   EmailType,
@@ -26,6 +27,7 @@ import {
   sanitizeFeedbackContent,
   sanitizeFeedbackHtml,
 } from './content-sanitizer';
+import { JOURNEY_GUIDANCE_CATALOG } from './journey-guidance.catalog';
 
 const feedbackInclude = {
   author: { select: { id: true, name: true } },
@@ -42,13 +44,52 @@ const feedbackInclude = {
 } satisfies Prisma.FeedbackPostInclude;
 
 @Injectable()
-export class FeedbackService {
+export class FeedbackService implements OnApplicationBootstrap {
   private readonly logger = new Logger(FeedbackService.name);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly emailSender: EmailSenderService,
   ) {}
+
+  async onApplicationBootstrap(): Promise<void> {
+    await this.seedDefaultGuidancePosts();
+  }
+
+  async seedDefaultGuidancePosts(): Promise<void> {
+    try {
+      const admin = await this.prisma.user.findFirst({
+        where: { role: UserRole.ADMIN },
+        select: { id: true },
+      });
+      if (!admin) return;
+
+      for (const item of JOURNEY_GUIDANCE_CATALOG) {
+        const existing = await this.prisma.feedbackPost.findFirst({
+          where: { unlockTriggerCode: item.code },
+          select: { id: true },
+        });
+        if (!existing) {
+          await this.prisma.feedbackPost.create({
+            data: {
+              authorId: admin.id,
+              title: item.titleAr,
+              content: `<p>${item.summaryAr}</p>`,
+              visibility: FeedbackVisibility.ALL,
+              context: FeedbackContext.GENERAL,
+              tags: [FeedbackTag.GENERAL, FeedbackTag.LEARNING],
+              unlockTriggerCode: item.code,
+              promptTemplate: item.promptTemplateAr,
+              tierLevel: item.isAdvanced ? 'ADVANCED' : 'BASIC',
+            },
+          });
+          this.logger.log(`Seeded journey guidance post for ${item.code}`);
+        }
+      }
+    } catch (error) {
+      this.logger.warn(`Could not seed journey guidance posts: ${error}`);
+    }
+  }
 
   private async assertMember(userId: string) {
     const member = await this.prisma.user.findFirst({
@@ -331,6 +372,11 @@ export class FeedbackService {
     const where: Prisma.FeedbackPostWhereInput = {
       ...(await this.authorizedWhere(userId, scope)),
       archivedAt: null,
+      ...(query.kind === 'guidance'
+        ? { unlockTriggerCode: { not: null } }
+        : query.kind === 'member'
+          ? { unlockTriggerCode: null }
+          : {}),
     };
     const [items, total] = await this.prisma.$transaction([
       this.prisma.feedbackPost.findMany({
@@ -469,10 +515,16 @@ export class FeedbackService {
   async listForAdmin(query: AdminFeedbackQueryDto) {
     const limit = Math.min(50, Math.max(1, Math.floor(query.limit) || 20));
     const page = Math.max(1, Math.floor(query.page) || 1);
-    const where: Prisma.FeedbackPostWhereInput =
-      query.archived === 'true'
+    const where: Prisma.FeedbackPostWhereInput = {
+      ...(query.archived === 'true'
         ? { archivedAt: { not: null } }
-        : { archivedAt: null };
+        : { archivedAt: null }),
+      ...(query.kind === 'guidance'
+        ? { unlockTriggerCode: { not: null } }
+        : query.kind === 'member'
+          ? { unlockTriggerCode: null }
+          : {}),
+    };
     const [items, total] = await this.prisma.$transaction([
       this.prisma.feedbackPost.findMany({
         where,

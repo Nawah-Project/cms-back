@@ -164,11 +164,13 @@ export class ProfileService
     portfolioUrl?: string | null,
     name?: string,
     targetJobTitle?: string | null,
+    preferredLocations?: string[],
   ) {
     if (
       portfolioUrl !== undefined ||
       name !== undefined ||
-      targetJobTitle !== undefined
+      targetJobTitle !== undefined ||
+      preferredLocations !== undefined
     ) {
       const data: Prisma.UserUpdateInput = {};
       if (portfolioUrl !== undefined) {
@@ -177,6 +179,9 @@ export class ProfileService
       if (name !== undefined) data.name = name.trim();
       if (targetJobTitle !== undefined) {
         data.targetJobTitle = targetJobTitle?.trim() || null;
+      }
+      if (preferredLocations !== undefined) {
+        data.preferredLocations = preferredLocations;
       }
       await this.prisma.user.update({
         where: { id: userId },

@@ -1,5 +1,6 @@
 import { Transform } from 'class-transformer';
 import {
+  IsArray,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -36,4 +37,10 @@ export class UpdateProfileDto {
     message: 'targetJobTitle must contain English characters only',
   })
   targetJobTitle?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  preferredLocations?: string[];
 }
+

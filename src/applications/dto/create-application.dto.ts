@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsDateString,
@@ -9,6 +10,7 @@ import {
   IsUrl,
   Max,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import { ApplicationStage } from '../enums/application-stage.enum';
 import { ApplicationOutcome } from '../enums/application-outcome.enum';
@@ -27,6 +29,9 @@ export class CreateApplicationDto {
   @IsDateString()
   applicationDate?: string;
 
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim() === '' ? undefined : value,
+  )
   @IsOptional()
   @IsString()
   location?: string;
@@ -35,7 +40,13 @@ export class CreateApplicationDto {
   @IsEnum(ApplicationMethod)
   applicationMethod?: ApplicationMethod;
 
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim() === '' ? undefined : value,
+  )
   @IsOptional()
+  @ValidateIf(
+    (o, value) => value !== null && value !== undefined && value !== '',
+  )
   @IsUrl(
     { require_protocol: true, protocols: ['http', 'https'] },
     { message: 'jobUrl must be a valid URL with http or https protocol' },
@@ -79,3 +90,4 @@ export class CreateApplicationDto {
   @IsBoolean()
   sharedWithGroup?: boolean;
 }
+

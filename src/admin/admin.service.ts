@@ -60,6 +60,7 @@ type MemberRow = {
   activityStatus: ActivityState['activityStatus'];
   applicationsCount: number;
   applied: number;
+  assignment: number;
   interview: number;
   decision: number;
   closed: number;
@@ -187,6 +188,7 @@ export class AdminService {
     return Prisma.sql`${this.userActivityCte()}, ${this.journeyCte()}, application_counts AS (
         SELECT "userId", COUNT(*)::int AS total,
           COUNT(*) FILTER (WHERE stage = 'APPLIED')::int AS applied,
+          COUNT(*) FILTER (WHERE stage = 'ASSIGNMENT')::int AS assignment,
           COUNT(*) FILTER (WHERE stage = 'INTERVIEW')::int AS interview,
           COUNT(*) FILTER (WHERE stage = 'DECISION')::int AS decision,
           COUNT(*) FILTER (WHERE stage = 'CLOSED')::int AS closed
@@ -207,8 +209,9 @@ export class AdminService {
         (c.portfolio_url IS NOT NULL AND c.has_cv) AS "profileComplete",
         c.last_at AS "lastActivityAt", c.inactivity_days AS "inactivityDays",
         c.activity_status AS "activityStatus", COALESCE(a.total, 0)::int AS "applicationsCount",
-        COALESCE(a.applied, 0)::int AS applied, COALESCE(a.interview, 0)::int AS interview,
-        COALESCE(a.decision, 0)::int AS decision, COALESCE(a.closed, 0)::int AS closed,
+        COALESCE(a.applied, 0)::int AS applied, COALESCE(a.assignment, 0)::int AS assignment,
+        COALESCE(a.interview, 0)::int AS interview, COALESCE(a.decision, 0)::int AS decision,
+        COALESCE(a.closed, 0)::int AS closed,
         d."activeTasks", d."inProgressTasks", d."overdueTasks", d."lastTaskAt",
         j.node_code AS "journeyNodeCode", j.journey_week AS "journeyWeek",
         j.node_started_at AS "journeyNodeStartedAt", j.completed_nodes AS "journeyCompletedNodes",
@@ -259,6 +262,7 @@ export class AdminService {
       applicationsCount: row.applicationsCount,
       currentStageCounts: {
         applied: row.applied,
+        assignment: row.assignment,
         interview: row.interview,
         decision: row.decision,
         closed: row.closed,
@@ -735,6 +739,7 @@ export class AdminService {
     const activityState = getActivityState(lastActivityAt);
     const currentStageCounts = {
       applied: 0,
+      assignment: 0,
       interview: 0,
       decision: 0,
       closed: 0,

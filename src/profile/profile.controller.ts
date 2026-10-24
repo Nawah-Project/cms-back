@@ -44,6 +44,7 @@ export class ProfileController {
       body.portfolioUrl,
       body.name,
       body.targetJobTitle,
+      body.preferredLocations,
     );
   }
 

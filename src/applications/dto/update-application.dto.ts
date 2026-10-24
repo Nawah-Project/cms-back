@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsDateString,
@@ -27,6 +28,9 @@ export class UpdateApplicationDto {
   @IsDateString()
   applicationDate?: string;
 
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim() === '' ? null : value,
+  )
   @IsOptional()
   @ValidateIf((o, value) => value !== null)
   @IsString()
@@ -37,8 +41,13 @@ export class UpdateApplicationDto {
   @IsEnum(ApplicationMethod)
   applicationMethod?: ApplicationMethod | null;
 
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim() === '' ? null : value,
+  )
   @IsOptional()
-  @ValidateIf((o, value) => value !== null)
+  @ValidateIf(
+    (o, value) => value !== null && value !== undefined && value !== '',
+  )
   @IsUrl(
     { require_protocol: true, protocols: ['http', 'https'] },
     { message: 'jobUrl must be a valid URL with http or https protocol' },
@@ -78,3 +87,4 @@ export class UpdateApplicationDto {
   @IsBoolean()
   sharedWithGroup?: boolean;
 }
+

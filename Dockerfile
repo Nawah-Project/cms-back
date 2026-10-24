@@ -8,6 +8,7 @@ COPY prisma ./prisma
 RUN npm ci
 RUN npm run prisma:generate
 COPY . .
+ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN npm run build
 
 FROM base AS production-dependencies

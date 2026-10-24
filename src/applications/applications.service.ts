@@ -114,6 +114,10 @@ export class ApplicationsService {
       : null;
     const journeyWeek =
       createDto.journeyWeek ?? journeyState?.currentWeek ?? 1;
+    const hasAssignment =
+      createDto.hasAssignment !== undefined
+        ? createDto.hasAssignment
+        : stage === ApplicationStage.ASSIGNMENT;
 
     const created = await this.prisma.application.create({
       data: {
@@ -128,7 +132,7 @@ export class ApplicationsService {
         outcome,
         isTailored: createDto.isTailored ?? false,
         journeyWeek,
-        hasAssignment: createDto.hasAssignment ?? false,
+        hasAssignment,
         interviewDate: createDto.interviewDate
           ? new Date(createDto.interviewDate)
           : null,
@@ -309,6 +313,11 @@ export class ApplicationsService {
         updateDto.hasAssignment !== application.hasAssignment
       ) {
         data.hasAssignment = updateDto.hasAssignment;
+      } else if (
+        nextStage === ApplicationStage.ASSIGNMENT &&
+        !application.hasAssignment
+      ) {
+        data.hasAssignment = true;
       }
       if (updateDto.interviewDate !== undefined) {
         const nextInterviewDate = updateDto.interviewDate

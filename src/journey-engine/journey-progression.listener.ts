@@ -35,7 +35,7 @@ export class JourneyProgressionListener {
       payload.stage === ApplicationStage.ASSIGNMENT ||
       payload.hasAssignment === true
     ) {
-      await this.journeyEngine.unlockAdvancedInterviewPrepIfNeeded(
+      await this.journeyEngine.evaluateInterviewGuidanceUnlocks(
         payload.userId,
       );
     }
@@ -54,12 +54,22 @@ export class JourneyProgressionListener {
       payload.stage === ApplicationStage.ASSIGNMENT ||
       payload.hasAssignment === true
     ) {
-      await this.journeyEngine.unlockAdvancedInterviewPrepIfNeeded(
+      await this.journeyEngine.evaluateInterviewGuidanceUnlocks(
         payload.userId,
       );
     }
 
     await this.journeyEngine.evaluateProgress(payload.userId);
+  }
+
+  @OnEvent('feedback.read')
+  async handleFeedbackRead(payload: {
+    userId: string;
+    feedbackId?: string;
+    unlockTriggerCode?: string | null;
+  }): Promise<void> {
+    if (!payload?.userId) return;
+    await this.journeyEngine.evaluateInterviewGuidanceUnlocks(payload.userId);
   }
 
   @OnEvent('sidetask.submitted')

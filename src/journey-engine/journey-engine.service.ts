@@ -92,8 +92,41 @@ export class JourneyEngineService implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     try {
       await seedJourneyV4Nodes(this.prisma);
+      await this.cleanupCorruptedData();
     } catch {
       // Allow application startup in test or dry-run environments without DB connectivity
+    }
+  }
+
+  async cleanupCorruptedData(): Promise<void> {
+    if (!this.prisma?.sideTaskSubmission?.deleteMany) return;
+    try {
+      await this.prisma.sideTaskSubmission.deleteMany({
+        where: {
+          OR: [
+            { reviewSummary: { contains: 'غلط' } },
+            { reviewSummary: { contains: 'اسبام' } },
+            { postTopic: { contains: 'غلط' } },
+            { postTopic: { contains: 'اسبام' } },
+          ],
+        },
+      });
+
+      const states = await this.prisma.userJourneyState.findMany();
+      for (const state of states) {
+        const cvCount = await this.prisma.userCvHistory.count({
+          where: { userId: state.userId },
+        });
+        const actualVersion = Math.max(1, cvCount);
+        if (state.cvVersionNumber !== actualVersion) {
+          await this.prisma.userJourneyState.update({
+            where: { userId: state.userId },
+            data: { cvVersionNumber: actualVersion },
+          });
+        }
+      }
+    } catch {
+      // safe fallback
     }
   }
 
@@ -562,9 +595,102 @@ export class JourneyEngineService implements OnModuleInit {
     return updatedState;
   }
 
+  async evaluateInterviewGuidanceUnlocks(userId: string): Promise<void> {
+    const hasCandidateApp = await this.prisma.application.count({
+      where: {
+        userId,
+        OR: [
+          { stage: { in: [ApplicationStage.INTERVIEW, ApplicationStage.ASSIGNMENT] } },
+          { hasAssignment: true },
+        ],
+      },
+    });
+    if (hasCandidateApp === 0) return;
+
+    // Check if user has read INSIGHT_W1_INTERVIEW_BASIC
+    const basicPost = await this.prisma.feedbackPost.findFirst({
+      where: { unlockTriggerCode: 'INSIGHT_W1_INTERVIEW_BASIC' },
+      select: { id: true },
+    });
+
+    let hasReadBasic = false;
+    if (basicPost) {
+      const readRecord = await this.prisma.feedbackRead.findUnique({
+        where: {
+          feedbackId_userId: {
+            feedbackId: basicPost.id,
+            userId,
+          },
+        },
+      });
+      hasReadBasic = Boolean(readRecord);
+    }
+
+    if (!hasReadBasic) {
+      // Exceptionally unlock INSIGHT_W1_INTERVIEW_BASIC early
+      const state = await this.getOrCreateUserState(userId);
+      const currentUnlocked = state.unlockedInsightCodes ?? [];
+      if (!currentUnlocked.includes('INSIGHT_W1_INTERVIEW_BASIC')) {
+        const nextUnlocked = Array.from(
+          new Set([...currentUnlocked, 'INSIGHT_W1_INTERVIEW_BASIC']),
+        );
+        await this.prisma.userJourneyState.update({
+          where: { userId },
+          data: { unlockedInsightCodes: nextUnlocked },
+        });
+
+        await this.createNotificationSafe({
+          userId,
+          type: 'INTERVIEW_PREP',
+          titleAr: '🎉 مبارك ترشحك للمرحلة التالية!',
+          titleEn: '🎉 Congrats on advancing to the next stage!',
+          bodyAr:
+            'تم فتح (الدليل الأساسي للتحضير السريع للمقابلات والأسيمنت) لك الآن لتستعد فوراً — وبمجرد إتمام قراءته سيُفتح لك الدليل المتقدم تلقائياً.',
+          bodyEn:
+            'The Core Interview & Assignment Prep Guide is now unlocked so you can prepare immediately. Once you finish reading it, the Advanced Guide will unlock automatically.',
+          actionUrl: '/professional-development?guidance=INSIGHT_W1_INTERVIEW_BASIC',
+        });
+      }
+    } else {
+      // Both conditions met: unlock advanced prep
+      await this.unlockAdvancedInterviewPrepIfNeeded(userId);
+    }
+  }
+
   async unlockAdvancedInterviewPrepIfNeeded(userId: string): Promise<boolean> {
     const state = await this.getOrCreateUserState(userId);
     if (state.hasUnlockedAdvPrep) return false;
+
+    // Check condition 1: at least one application in INTERVIEW or ASSIGNMENT
+    const hasCandidateApp = await this.prisma.application.count({
+      where: {
+        userId,
+        OR: [
+          { stage: { in: [ApplicationStage.INTERVIEW, ApplicationStage.ASSIGNMENT] } },
+          { hasAssignment: true },
+        ],
+      },
+    });
+    if (hasCandidateApp === 0) return false;
+
+    // Check condition 2: user has marked INSIGHT_W1_INTERVIEW_BASIC as read
+    const basicPost = await this.prisma.feedbackPost.findFirst({
+      where: { unlockTriggerCode: 'INSIGHT_W1_INTERVIEW_BASIC' },
+      select: { id: true },
+    });
+    if (basicPost) {
+      const readRecord = await this.prisma.feedbackRead.findUnique({
+        where: {
+          feedbackId_userId: {
+            feedbackId: basicPost.id,
+            userId,
+          },
+        },
+      });
+      if (!readRecord) {
+        return false;
+      }
+    }
 
     const unlockedInsightCodes = Array.from(
       new Set([
@@ -587,9 +713,9 @@ export class JourneyEngineService implements OnModuleInit {
       titleAr: 'تم فتح دليل التحضير المتقدم للمقابلة/الأسيمنت!',
       titleEn: 'Advanced Interview & Assignment Prep Unlocked!',
       bodyAr:
-        'بناءً على ترشحك لمقابلة أو استلام تاسك تقني، تم فتح دليل التحضير المتقدم وقوائم المراجعة.',
+        'بناءً على ترشحك لمقابلة أو استلام تاسك تقني وإتمامك قراءة الدليل الأساسي، تم فتح دليل التحضير المتقدم وقوائم المراجعة.',
       bodyEn:
-        'Based on your interview stage or technical assignment, the Advanced Interview & Assignment Prep guide is now unlocked.',
+        'Based on your interview or technical assignment and completing the core guide, the Advanced Interview & Assignment Prep guide is now unlocked.',
       actionUrl: '/professional-development?guidance=INSIGHT_INTERVIEW_ADVANCED',
     });
 

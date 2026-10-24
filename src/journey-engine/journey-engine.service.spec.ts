@@ -337,7 +337,17 @@ describe('JourneyEngineService (Journey V4 State Machine)', () => {
   });
 
   describe('4. Advanced Interview Prep & Job Market Compass', () => {
-    it('unlocks INSIGHT_INTERVIEW_ADVANCED on first interview or assignment', async () => {
+    it('unlocks INSIGHT_INTERVIEW_ADVANCED on first interview or assignment if basic guide is read', async () => {
+      (prismaMock.application.count as jest.Mock).mockResolvedValue(1);
+      (prismaMock as any).feedbackPost = {
+        findFirst: jest.fn().mockResolvedValue({ id: 'fp-basic' }),
+      };
+      (prismaMock as any).feedbackRead = {
+        findUnique: jest.fn().mockResolvedValue({
+          feedbackId: 'fp-basic',
+          userId: 'user-1',
+        }),
+      };
       const unlocked = await service.unlockAdvancedInterviewPrepIfNeeded('user-1');
       expect(unlocked).toBe(true);
       expect(currentState.hasUnlockedAdvPrep).toBe(true);

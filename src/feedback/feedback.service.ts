@@ -5,7 +5,9 @@ import {
   Logger,
   NotFoundException,
   OnApplicationBootstrap,
+  Optional,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   EmailType,
   FeedbackContext,
@@ -50,6 +52,7 @@ export class FeedbackService implements OnApplicationBootstrap {
   constructor(
     private readonly prisma: PrismaService,
     private readonly emailSender: EmailSenderService,
+    @Optional() private readonly eventEmitter?: EventEmitter2,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -429,13 +432,20 @@ export class FeedbackService implements OnApplicationBootstrap {
   }
 
   async markRead(userId: string, id: string) {
-    await this.findAuthorized(userId, id);
+    const post = await this.findAuthorized(userId, id);
     const read = await this.prisma.feedbackRead.upsert({
       where: { feedbackId_userId: { feedbackId: id, userId } },
       create: { feedbackId: id, userId },
       update: { readAt: new Date() },
       select: { feedbackId: true, userId: true, readAt: true },
     });
+
+    this.eventEmitter?.emit('feedback.read', {
+      userId,
+      feedbackId: id,
+      unlockTriggerCode: post.unlockTriggerCode,
+    });
+
     return { success: true, ...read };
   }
 

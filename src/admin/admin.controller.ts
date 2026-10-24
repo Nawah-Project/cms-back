@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   ParseUUIDPipe,
   Query,
@@ -17,6 +18,7 @@ import {
   MonitoringActivityQueryDto,
   MonitoringQueryDto,
 } from './dto/monitoring-query.dto';
+import { UpdateUxConfigDto } from './dto/track-ux-event.dto';
 
 @Controller('admin')
 @UseGuards(JwtAuthGuard, AdminGuard)
@@ -44,6 +46,11 @@ export class AdminController {
     return this.admin.getOverview();
   }
 
+  @Get('monitoring/attention')
+  getAttention(@Query() query: MonitoringActivityQueryDto) {
+    return this.admin.getAttention(query.limit);
+  }
+
   @Get('monitoring/users')
   getUsers(@Query() query: MonitoringQueryDto) {
     return this.admin.getUsers(query);
@@ -56,11 +63,21 @@ export class AdminController {
 
   @Get('monitoring/activity')
   getActivity(@Query() query: MonitoringActivityQueryDto) {
-    return this.admin.getActivity(query.limit);
+    return this.admin.getActivity(query.page, query.limit);
   }
 
   @Get('monitoring/users/:userId')
   getUserDetail(@Param('userId', new ParseUUIDPipe()) userId: string) {
     return this.admin.getUserDetail(userId);
+  }
+
+  @Get('monitoring/ux-analytics')
+  getUxAnalytics() {
+    return this.admin.getUxAnalytics();
+  }
+
+  @Patch('monitoring/ux-config')
+  updateUxConfig(@Body() dto: UpdateUxConfigDto) {
+    return this.admin.updateUxConfig(dto);
   }
 }

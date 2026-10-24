@@ -133,6 +133,7 @@ model User {
   transitions         ApplicationStageTransition[]
   authIdentities      AuthIdentity[]
   cv                  UserCv?
+  cvHistory           UserCvHistory[]
   assignedTasks       Task[]                       @relation("TaskAssignee")
   createdTasks        Task[]                       @relation("TaskCreator")
   taskNotes           TaskNote[]                   @relation("TaskNoteAuthor")
@@ -158,6 +159,21 @@ model UserCv {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("user_cvs")
+}
+
+model UserCvHistory {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @db.Uuid
+  versionNumber Int
+  originalName  String   @db.VarChar(255)
+  mimeType      String   @db.VarChar(100)
+  size          Int
+  storageKey    String   @db.VarChar(64)
+  uploadedAt    DateTime @default(now())
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, versionNumber])
+  @@map("user_cv_history")
 }
 
 model AuthIdentity {
@@ -415,8 +431,9 @@ model UserJourneyState {
   isGroupUnlocked      Boolean  @default(false) // يفتح بعد إتمام TASK_0 (5 طلبات)
   canUseTableView      Boolean  @default(false) // يفتح بعد إتمام W1_M1 (10 طلبات في الأسبوع 1)
   hasUnlockedAdvPrep   Boolean  @default(false) // يفتح عند أول INTERVIEW أو hasAssignment
-  cvVersionNumber      Int      @default(1)
-  updatedAt            DateTime @updatedAt
+  cvVersionNumber      Int       @default(1)
+  week1StartedAt       DateTime?
+  updatedAt            DateTime  @updatedAt
 
   @@map("user_journey_states")
 }

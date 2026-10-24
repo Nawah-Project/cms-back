@@ -440,6 +440,20 @@ export class FeedbackService implements OnApplicationBootstrap {
   }
 
   async unreadCount(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
+    });
+    if (user?.role !== UserRole.ADMIN) {
+      const journey = await this.prisma.userJourneyState.findUnique({
+        where: { userId },
+        select: { currentWeek: true },
+      });
+      if ((journey?.currentWeek ?? 0) < 3) {
+        return { unreadCount: 0, forYou: 0, shared: 0 };
+      }
+    }
+
     const [forYou, shared] = await Promise.all([
       this.unreadForScope(userId, 'for-you'),
       this.unreadForScope(userId, 'shared'),
@@ -451,6 +465,7 @@ export class FeedbackService implements OnApplicationBootstrap {
     const where: Prisma.FeedbackPostWhereInput = {
       ...(await this.authorizedWhere(userId, scope)),
       archivedAt: null,
+      unlockTriggerCode: null,
       reads: { none: { userId } },
     };
     return this.prisma.feedbackPost.count({ where });
@@ -463,6 +478,18 @@ export class FeedbackService implements OnApplicationBootstrap {
     });
     if (!currentUser) throw new NotFoundException('User not found');
     if (currentUser.role !== UserRole.USER) {
+      return {
+        unreadDirectFeedbackCount: 0,
+        unreadSharedFeedbackCount: 0,
+        latestDirectFeedback: null,
+        latestSharedInsight: null,
+      };
+    }
+    const journey = await this.prisma.userJourneyState.findUnique({
+      where: { userId },
+      select: { currentWeek: true },
+    });
+    if ((journey?.currentWeek ?? 0) < 3) {
       return {
         unreadDirectFeedbackCount: 0,
         unreadSharedFeedbackCount: 0,

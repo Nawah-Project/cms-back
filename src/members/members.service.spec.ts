@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await */
+/* eslint-disable @typescript-eslint/no-unsafe-call */
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { MembersService } from './members.service';
@@ -197,10 +197,49 @@ describe('MembersService', () => {
       expect.objectContaining({
         where: {
           userId: { in: ['member-b'] },
-          companyName: { in: ['Same Co'] },
+          OR: [{ companyName: { equals: 'same co', mode: 'insensitive' } }],
         },
       }),
     );
+  });
+
+  it('matches shared companies case-insensitively (e.g. Vodafone vs vodafone)', async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'member-a',
+      name: 'A',
+      portfolioUrl: null,
+      cv: null,
+    });
+    prisma.application.aggregate.mockResolvedValue({
+      _max: { createdAt: null, updatedAt: null },
+    });
+    prisma.applicationStageTransition.aggregate.mockResolvedValue({
+      _max: { changedAt: null },
+    });
+    prisma.application.findMany
+      .mockResolvedValueOnce([
+        {
+          id: 'app-a',
+          companyName: 'Vodafone',
+          jobTitle: 'Designer',
+          applicationDate: '2026-01-01',
+          location: null,
+          applicationMethod: null,
+          jobUrl: null,
+          stage: 'APPLIED',
+          outcome: 'NONE',
+          updatedAt: new Date('2026-01-02'),
+        },
+      ])
+      .mockResolvedValueOnce([{ userId: 'member-b', companyName: 'vodafone' }]);
+    prisma.user.findMany.mockResolvedValue([{ id: 'member-b', name: 'B' }]);
+
+    const result = await service.getMemberDetail('member-a', 'member-a');
+
+    expect(result.applications[0].sharedCompany).toBe(true);
+    expect(result.applications[0].otherMembers).toEqual([
+      { id: 'member-b', name: 'B', avatar: null },
+    ]);
   });
 
   it('rejects access to members outside the authenticated user group', async () => {

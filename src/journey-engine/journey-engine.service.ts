@@ -1,4 +1,5 @@
 import {
+  ForbiddenException,
   Injectable,
   NotFoundException,
   OnModuleInit,
@@ -25,6 +26,7 @@ import {
   JourneyNodeSeedItem,
   seedJourneyV4Nodes,
 } from './journey-v4.seed';
+import { JOURNEY_GUIDANCE_CATALOG } from '../feedback/journey-guidance.catalog';
 
 export type JourneyNodeStatus = 'COMPLETED' | 'ACTIVE' | 'LOCKED_BLURRED';
 
@@ -143,6 +145,15 @@ export class JourneyEngineService implements OnModuleInit {
     actionUrl?: string | null;
   }): Promise<Notification | null> {
     if (!this.prisma?.notification?.create) return null;
+    const existing = await this.prisma.notification.findFirst({
+      where: {
+        userId: data.userId,
+        type: data.type,
+        titleAr: data.titleAr,
+      },
+    });
+    if (existing) return existing;
+
     return this.prisma.notification.create({
       data: {
         userId: data.userId,
@@ -162,6 +173,12 @@ export class JourneyEngineService implements OnModuleInit {
     });
 
     if (existing) {
+      if (existing.currentWeek >= 1 && !existing.week1StartedAt) {
+        return this.prisma.userJourneyState.update({
+          where: { userId },
+          data: { week1StartedAt: existing.weekStartedAt || new Date() },
+        });
+      }
       if (!existing.isGroupUnlocked && this.prisma?.membership?.findUnique) {
         const membership = await this.prisma.membership.findUnique({
           where: { userId },
@@ -409,13 +426,25 @@ export class JourneyEngineService implements OnModuleInit {
       !unlockedInsightCodes.includes(currentNode.unlocksInsightCode)
     ) {
       unlockedInsightCodes.push(currentNode.unlocksInsightCode);
+      const guidance = JOURNEY_GUIDANCE_CATALOG.find(
+        (g) => g.code === currentNode.unlocksInsightCode,
+      );
+      const titleAr = 'تم فتح إرشادات جديدة في رحلتك!';
+      const titleEn = 'New Career Guidance Unlocked!';
+      const bodyAr = guidance
+        ? `تم فتح إرشادات: ${guidance.titleAr} بعد إتمام ${currentNode.titleAr}.`
+        : `تم فتح إرشادات جديدة بعد إتمام ${currentNode.titleAr}.`;
+      const bodyEn = guidance
+        ? `Guidance unlocked: ${guidance.titleEn} after completing ${currentNode.titleEn}.`
+        : `New guidance unlocked after completing ${currentNode.titleEn}.`;
+
       await this.createNotificationSafe({
         userId,
         type: 'INSIGHT_UNLOCKED',
-        titleAr: 'تم فتح ملاحظة إرشادية جديدة!',
-        titleEn: 'New Career Insight Unlocked!',
-        bodyAr: `تم فتح الدليل الإرشادي (${currentNode.unlocksInsightCode}) بعد إتمام ${currentNode.titleAr}.`,
-        bodyEn: `Insight (${currentNode.unlocksInsightCode}) has been unlocked after completing ${currentNode.titleEn}.`,
+        titleAr,
+        titleEn,
+        bodyAr,
+        bodyEn,
         actionUrl: `/professional-development?guidance=${currentNode.unlocksInsightCode}`,
       });
     }
@@ -488,6 +517,11 @@ export class JourneyEngineService implements OnModuleInit {
     const weekStartedAt =
       nextWeek !== state.currentWeek ? now : state.weekStartedAt;
 
+    let week1StartedAt = state.week1StartedAt;
+    if (!week1StartedAt && (nextWeek >= 1 || nextNodeCode === 'W1_M1')) {
+      week1StartedAt = now;
+    }
+
     const updatedState = await this.prisma.userJourneyState.update({
       where: { userId },
       data: {
@@ -499,6 +533,7 @@ export class JourneyEngineService implements OnModuleInit {
         currentWeek: nextWeek,
         currentNodeStartedAt: now,
         weekStartedAt,
+        week1StartedAt,
       },
     });
 
@@ -575,6 +610,59 @@ export class JourneyEngineService implements OnModuleInit {
   }> {
     const state = await this.getOrCreateUserState(userId);
     const nodeCode = dto.nodeCode?.trim() || state.currentNodeCode;
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
+    });
+    const isAdmin = user?.role === 'ADMIN';
+
+    if (!isAdmin) {
+      if (
+        (dto.type === SideTaskType.LINKEDIN_POST ||
+          (dto.reviewSummary && dto.reviewSummary.includes('isUserChange'))) &&
+        state.currentWeek < 3
+      ) {
+        throw new ForbiddenException(
+          'Manual tooling and LinkedIn changes unlock in Week 3',
+        );
+      }
+
+      if (
+        dto.type === SideTaskType.OUTREACH_CONTACT &&
+        state.currentWeek < 4
+      ) {
+        throw new ForbiddenException(
+          'Outreach contact activity unlocks in Week 4',
+        );
+      }
+
+      if (dto.type === SideTaskType.WEEKLY_REVIEW) {
+        const isUserChange =
+          dto.reviewSummary && dto.reviewSummary.includes('isUserChange');
+        if (!isUserChange) {
+          const node = await this.getNodeByCode(nodeCode);
+          if (!node || node.nodeType !== JourneyNodeType.REVIEW_STATION) {
+            throw new ForbiddenException(
+              'Weekly review can only be submitted on Day 7 review checkpoint',
+            );
+          }
+        }
+      }
+
+      const tenSecondsAgo = new Date(Date.now() - 10_000);
+      const recentSubmission = await this.prisma.sideTaskSubmission.findFirst({
+        where: {
+          userId,
+          type: dto.type,
+          nodeCode,
+          createdAt: { gte: tenSecondsAgo },
+        },
+      });
+      if (recentSubmission) {
+        return { submission: recentSubmission, journeyState: state };
+      }
+    }
 
     const submission = await this.prisma.sideTaskSubmission.create({
       data: {

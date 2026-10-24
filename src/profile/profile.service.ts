@@ -77,13 +77,16 @@ export class ProfileService
     }
 
     try {
-      const activeFiles = new Set(
-        (
-          await this.prisma.userCv.findMany({
-            select: { storageKey: true },
-          })
-        ).map(({ storageKey }) => storageKey),
-      );
+      const activeUserCvs = await this.prisma.userCv.findMany({
+        select: { storageKey: true },
+      });
+      const activeCvHistories = await this.prisma.userCvHistory.findMany({
+        select: { storageKey: true },
+      });
+      const activeFiles = new Set([
+        ...activeUserCvs.map(({ storageKey }) => storageKey),
+        ...activeCvHistories.map(({ storageKey }) => storageKey),
+      ]);
       const staleBefore = Date.now() - CV_ORPHAN_FILE_GRACE_PERIOD_MS;
       await Promise.all(
         files
@@ -121,6 +124,22 @@ export class ProfileService
             uploadedAt: true,
           },
         },
+        journeyState: {
+          select: {
+            cvVersionNumber: true,
+          },
+        },
+        cvHistory: {
+          select: {
+            id: true,
+            versionNumber: true,
+            originalName: true,
+            mimeType: true,
+            size: true,
+            uploadedAt: true,
+          },
+          orderBy: { versionNumber: 'desc' },
+        },
       },
     });
     if (!user) throw new NotFoundException('Profile not found');
@@ -132,6 +151,8 @@ export class ProfileService
       targetJobTitle: user.targetJobTitle ?? null,
       cv,
       hasCv: cv !== null,
+      cvVersionNumber: user.journeyState?.cvVersionNumber ?? 1,
+      cvHistory: user.cvHistory ?? [],
       profileComplete: Boolean(
         user.portfolioUrl && cv && user.targetJobTitle?.trim(),
       ),
@@ -189,7 +210,7 @@ export class ProfileService
             select: { storageKey: true },
           });
 
-          let newCvVersion: number | null = null;
+          let newCvVersion = 1;
           if (previous) {
             const journeyState = await transaction.userJourneyState.findUnique({
               where: { userId },
@@ -227,6 +248,17 @@ export class ProfileService
             });
           }
 
+          await transaction.userCvHistory.create({
+            data: {
+              userId,
+              versionNumber: newCvVersion,
+              originalName,
+              mimeType: CV_MIME_TYPE,
+              size: file.buffer.length,
+              storageKey,
+            },
+          });
+
           const cv = await transaction.userCv.upsert({
             where: { userId },
             create: {
@@ -256,17 +288,49 @@ export class ProfileService
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
 
-      if (
-        result.previousStorageKey &&
-        result.previousStorageKey !== storageKey
-      ) {
-        await this.deleteStoredCv(result.previousStorageKey);
-      }
+      // We preserve previous CV files on disk so users can access their CV History
       return toSafeCvMetadata(result.cv);
     } catch (error) {
       await this.deleteStoredCv(storageKey);
       throw error;
     }
+  }
+
+  async getCvHistoryFile(requesterId: string, historyId: string) {
+    const historyItem = await this.prisma.userCvHistory.findUnique({
+      where: { id: historyId },
+    });
+    if (!historyItem) throw new NotFoundException('CV history item not found');
+    if (historyItem.userId !== requesterId) {
+      const requester = await this.prisma.user.findUnique({
+        where: { id: requesterId },
+        select: { role: true },
+      });
+      if (requester?.role !== UserRole.ADMIN) {
+        throw new ForbiddenException('You cannot access this CV');
+      }
+    }
+    if (!STORAGE_KEY_PATTERN.test(historyItem.storageKey)) {
+      this.logger.error(`Invalid stored CV history key: ${historyId}`);
+      throw new NotFoundException('CV file is unavailable');
+    }
+    const filePath = join(this.storageDir, historyItem.storageKey);
+    try {
+      await access(filePath, fsConstants.R_OK);
+    } catch {
+      throw new NotFoundException('CV file is unavailable');
+    }
+    return {
+      filePath,
+      metadata: {
+        id: historyItem.id,
+        versionNumber: historyItem.versionNumber,
+        originalName: historyItem.originalName,
+        mimeType: historyItem.mimeType,
+        size: historyItem.size,
+        uploadedAt: historyItem.uploadedAt,
+      },
+    };
   }
 
   async getCvForUser(requesterId: string, targetUserId: string) {

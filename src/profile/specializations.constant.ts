@@ -48,6 +48,48 @@ export const STANDARDIZED_SPECIALIZATIONS: SpecializationOption[] = [
     descriptionAr:
       'تطوير تطبيقات الهواتف الذكية لأنظمة iOS و Android وتجارب المستخدم عبر الأجهزة',
   },
+  {
+    value: 'Data Analyst',
+    titleAr: 'محلل بيانات',
+    titleEn: 'Data Analyst',
+    descriptionAr:
+      'تحليل البيانات واستخراج الرؤى وبناء لوحات التحكم التفاعلية للقرارات الإستراتيجية',
+  },
+  {
+    value: 'Data Scientist',
+    titleAr: 'عالم بيانات',
+    titleEn: 'Data Scientist',
+    descriptionAr:
+      'بناء النماذج التنبؤية والخوارزميات الإحصائية واستخراج الأنماط من البيانات الضخمة',
+  },
+  {
+    value: 'DevOps Engineer',
+    titleAr: 'مهندس ديف أوبس',
+    titleEn: 'DevOps Engineer',
+    descriptionAr:
+      'إدارة البنية التحتية السحابية وأتمتة خطوط النشر والتشغيل والمراقبة المستمرة',
+  },
+  {
+    value: 'Software QA Engineer',
+    titleAr: 'مهندس ضمان جودة البرمجيات',
+    titleEn: 'Software QA Engineer',
+    descriptionAr:
+      'ضمان جودة النظم وكتابة الاختبارات المؤتمتة واختبارات الأداء والأمان',
+  },
+  {
+    value: 'Product Manager',
+    titleAr: 'مدير منتج رقمي',
+    titleEn: 'Product Manager',
+    descriptionAr:
+      'قيادة إستراتيجية المنتجات الرقمية وإدارة دورة حياة المنتج وتحقيق التوافق مع السوق',
+  },
+  {
+    value: 'Cybersecurity Specialist',
+    titleAr: 'أخصائي أمن سيبراني',
+    titleEn: 'Cybersecurity Specialist',
+    descriptionAr:
+      'حماية الأنظمة والشبكات والبيانات وتحليل الثغرات والاستجابة للحوادث السيبرانية',
+  },
 ];
 
 export const VALID_SPECIALIZATION_VALUES = STANDARDIZED_SPECIALIZATIONS.map(

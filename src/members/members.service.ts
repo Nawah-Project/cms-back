@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ApplicationOutcome, ApplicationStage, Prisma } from '@prisma/client';
+import { ApplicationOutcome, ApplicationStage, Prisma, UserRole } from '@prisma/client';
 import { PrismaService as Database } from '../prisma/prisma.service';
 
 type MemberSummary = {
@@ -74,6 +74,24 @@ export class MembersService {
   private async getGroup(
     userId: string,
   ): Promise<{ id: string; memberIds: string[] }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
+    });
+    const isAdmin = user?.role === UserRole.ADMIN;
+
+    if (!isAdmin) {
+      const journey = await this.prisma.userJourneyState.findUnique({
+        where: { userId },
+        select: { isGroupUnlocked: true },
+      });
+      if (!journey?.isGroupUnlocked) {
+        throw new ForbiddenException(
+          'Group progress unlocks after completing Task 0 (5 applications)',
+        );
+      }
+    }
+
     const membership = await this.prisma.membership.findUnique({
       where: { userId },
       select: { groupId: true },
@@ -340,41 +358,67 @@ export class MembersService {
             : row.outcome,
         changedAt: row.createdAt.toISOString(),
       })),
-      ...sideTasks.map((row) => ({
-        id: `sidetask:${row.id}`,
-        activityType: 'SIDE_TASK' as const,
-        sharedWithGroup: true,
-        member: { ...row.user, avatar: null },
-        memberId: row.userId,
-        application: {
-          id: row.id,
-          companyName:
-            row.type === 'LINKEDIN_POST'
-              ? 'LinkedIn Post'
-              : row.type === 'WEEKLY_REVIEW'
-                ? `Week ${row.journeyWeek} Review`
-                : 'Outreach Contact',
-          jobTitle:
-            row.postTopic ||
-            row.reviewSummary ||
-            `Completed ${row.nodeCode} (${row.type})`,
-          jobUrl: row.postUrl ?? null,
-          applicationMethod: 'LINKEDIN',
-        },
-        sideTask: {
-          id: row.id,
-          type: row.type,
-          nodeCode: row.nodeCode,
-          journeyWeek: row.journeyWeek,
-          postUrl: row.postUrl ?? null,
-          postTopic: row.postTopic ?? null,
-          reviewSummary: row.reviewSummary ?? null,
-        },
-        fromStage: null,
-        toStage: ApplicationStage.APPLIED,
-        outcome: null,
-        changedAt: row.createdAt.toISOString(),
-      })),
+      ...sideTasks.map((row) => {
+        let companyName =
+          row.type === 'LINKEDIN_POST'
+            ? 'منشور لينكدإن'
+            : row.type === 'WEEKLY_REVIEW'
+              ? `مراجعة الأسبوع ${row.journeyWeek}`
+              : 'نشاط تواصل مهني';
+        let jobTitle =
+          row.postTopic ||
+          row.reviewSummary ||
+          `إتمام ${row.nodeCode}`;
+
+        if (
+          row.reviewSummary &&
+          typeof row.reviewSummary === 'string' &&
+          row.reviewSummary.trim().startsWith('{')
+        ) {
+          try {
+            const parsed = JSON.parse(row.reviewSummary);
+            if (parsed.category === 'CV_UPDATE') {
+              companyName = 'تحديث السيرة الذاتية';
+              jobTitle = `قام بتحديث السيرة الذاتية (CV v${parsed.version || 1})`;
+            } else if (parsed.category === 'PORTFOLIO_UPDATE') {
+              companyName = 'معرض الأعمال';
+              jobTitle = `قام بتحديث معرض أعماله${parsed.summary ? `: ${parsed.summary}` : ''}`;
+            } else if (parsed.summary) {
+              jobTitle = parsed.summary;
+            }
+          } catch {
+            // keep default
+          }
+        }
+
+        return {
+          id: `sidetask:${row.id}`,
+          activityType: 'SIDE_TASK' as const,
+          sharedWithGroup: true,
+          member: { ...row.user, avatar: null },
+          memberId: row.userId,
+          application: {
+            id: row.id,
+            companyName,
+            jobTitle,
+            jobUrl: row.postUrl ?? null,
+            applicationMethod: 'LINKEDIN',
+          },
+          sideTask: {
+            id: row.id,
+            type: row.type,
+            nodeCode: row.nodeCode,
+            journeyWeek: row.journeyWeek,
+            postUrl: row.postUrl ?? null,
+            postTopic: row.postTopic ?? null,
+            reviewSummary: row.reviewSummary ?? null,
+          },
+          fromStage: null,
+          toStage: ApplicationStage.APPLIED,
+          outcome: null,
+          changedAt: row.createdAt.toISOString(),
+        };
+      }),
     ];
     return feed
       .sort(

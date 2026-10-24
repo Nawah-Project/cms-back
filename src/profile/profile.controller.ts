@@ -88,4 +88,22 @@ export class ProfileController {
     response.setHeader('X-Content-Type-Options', 'nosniff');
     return new StreamableFile(createReadStream(result.filePath));
   }
+
+  @Get('profile/cv/history/:historyId')
+  async getCvHistory(
+    @CurrentUser('id') requesterId: string,
+    @Res({ passthrough: true }) response: Response,
+    @Param('historyId', new ParseUUIDPipe()) historyId: string,
+  ) {
+    const result = await this.profile.getCvHistoryFile(requesterId, historyId);
+    response.setHeader('Content-Type', result.metadata.mimeType);
+    response.setHeader(
+      'Content-Disposition',
+      cvContentDisposition(result.metadata.originalName),
+    );
+    response.setHeader('Content-Length', result.metadata.size);
+    response.setHeader('Cache-Control', 'private, no-store');
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    return new StreamableFile(createReadStream(result.filePath));
+  }
 }

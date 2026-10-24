@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -68,7 +69,36 @@ export class TasksService {
     return task;
   }
 
+  private async assertProfDevUnlocked(userId: string): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        role: true,
+        journeyState: {
+          select: {
+            isGroupUnlocked: true,
+            completedNodeCodes: true,
+            currentWeek: true,
+          },
+        },
+      },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    if (user.role === UserRole.ADMIN) return;
+    const js = user.journeyState;
+    const isUnlocked =
+      js?.isGroupUnlocked ||
+      (js?.completedNodeCodes ?? []).includes('TASK_0') ||
+      (js?.currentWeek ?? 0) >= 1;
+    if (!isUnlocked) {
+      throw new ForbiddenException(
+        'Professional development is locked until Task 0 is completed',
+      );
+    }
+  }
+
   async createPersonal(userId: string, dto: CreateTaskDto) {
+    await this.assertProfDevUnlocked(userId);
     if (dto.mentorPriority === true)
       throw new BadRequestException(
         'Personal tasks cannot have mentor priority',
@@ -168,17 +198,17 @@ export class TasksService {
       _count: { notes: number };
     },
   >(task: T) {
+    const { _count, ...rest } = task;
     const total = task.checklist.length;
     const completed = task.checklist.filter((item) => item.completed).length;
     return {
-      ...task,
+      ...rest,
       overdue:
         task.dueDate !== null &&
         task.dueDate < new Date() &&
         task.status !== TaskStatus.DONE,
       progress: { completed, total },
-      unreadMentorFeedbackCount: task._count.notes,
-      _count: undefined,
+      unreadMentorFeedbackCount: _count.notes,
     };
   }
 

@@ -32,5 +32,8 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsString()
   @MaxLength(100)
+  @Matches(/^[a-zA-Z0-9\s\/\-\.\+\#\&\(\)]+$/, {
+    message: 'targetJobTitle must contain English characters only',
+  })
   targetJobTitle?: string | null;
 }

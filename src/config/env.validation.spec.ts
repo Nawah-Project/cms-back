@@ -19,7 +19,10 @@ describe('validateEnvironment', () => {
       validateEnvironment({ ...validProductionEnv, JWT_ACCESS_SECRET: '' }),
     ).toThrow('JWT_ACCESS_SECRET must be set');
     expect(() =>
-      validateEnvironment({ ...validProductionEnv, JWT_ACCESS_SECRET: 'short' }),
+      validateEnvironment({
+        ...validProductionEnv,
+        JWT_ACCESS_SECRET: 'short',
+      }),
     ).toThrow('at least 32 bytes');
   });
 
@@ -37,19 +40,31 @@ describe('validateEnvironment', () => {
       }),
     ).toThrow('replace the JWT secret placeholders');
     expect(() =>
-      validateEnvironment({ ...validProductionEnv, FRONTEND_ORIGIN: 'http://app.example.com' }),
+      validateEnvironment({
+        ...validProductionEnv,
+        FRONTEND_ORIGIN: 'http://app.example.com',
+      }),
     ).toThrow('must use HTTPS');
   });
 
   it('rejects malformed database, file size, and partial OAuth configuration', () => {
     expect(() =>
-      validateEnvironment({ ...validProductionEnv, DATABASE_URL: 'mysql://db/cms' }),
+      validateEnvironment({
+        ...validProductionEnv,
+        DATABASE_URL: 'mysql://db/cms',
+      }),
     ).toThrow('must use PostgreSQL');
     expect(() =>
-      validateEnvironment({ ...validProductionEnv, CV_MAX_FILE_SIZE_BYTES: '30000000' }),
+      validateEnvironment({
+        ...validProductionEnv,
+        CV_MAX_FILE_SIZE_BYTES: '30000000',
+      }),
     ).toThrow('CV_MAX_FILE_SIZE_BYTES');
     expect(() =>
-      validateEnvironment({ ...validProductionEnv, GOOGLE_CLIENT_ID: 'configured' }),
+      validateEnvironment({
+        ...validProductionEnv,
+        GOOGLE_CLIENT_ID: 'configured',
+      }),
     ).toThrow('configure all Google OAuth settings');
   });
 });

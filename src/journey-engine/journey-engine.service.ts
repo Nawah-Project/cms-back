@@ -83,6 +83,8 @@ export interface JobMarketCompassResponse {
 
 @Injectable()
 export class JourneyEngineService implements OnModuleInit {
+  private activeEvaluations = new Map<string, Promise<UserJourneyState>>();
+
   constructor(
     private readonly prisma: PrismaService,
     @Optional() private readonly groupAssignment?: GroupAssignmentService,
@@ -93,8 +95,53 @@ export class JourneyEngineService implements OnModuleInit {
     try {
       await seedJourneyV4Nodes(this.prisma);
       await this.cleanupCorruptedData();
+      await this.deduplicateNotifications();
     } catch {
       // Allow application startup in test or dry-run environments without DB connectivity
+    }
+  }
+
+  async deduplicateNotifications(userId?: string): Promise<number> {
+    if (!this.prisma?.notification) return 0;
+    try {
+      const userClause = userId ? `WHERE "userId" = '${userId.replace(/'/g, "''")}'` : '';
+
+      const duplicateGroups: Array<{
+        userId: string;
+        titleAr: string;
+        bodyAr: string;
+        cnt: string | number | bigint;
+      }> = await this.prisma.$queryRawUnsafe(
+        `SELECT "userId", "titleAr", "bodyAr", COUNT(*)::text as cnt
+         FROM "Notification"
+         ${userClause}
+         GROUP BY "userId", "titleAr", "bodyAr"
+         HAVING COUNT(*) > 1`,
+      );
+
+      let totalDeleted = 0;
+      for (const group of duplicateGroups) {
+        const rows = await this.prisma.notification.findMany({
+          where: {
+            userId: group.userId,
+            titleAr: group.titleAr,
+            bodyAr: group.bodyAr,
+          },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          select: { id: true },
+        });
+
+        if (rows.length > 1) {
+          const idsToDelete = rows.slice(1).map((r) => r.id);
+          const delResult = await this.prisma.notification.deleteMany({
+            where: { id: { in: idsToDelete } },
+          });
+          totalDeleted += delResult.count;
+        }
+      }
+      return totalDeleted;
+    } catch {
+      return 0;
     }
   }
 
@@ -178,12 +225,21 @@ export class JourneyEngineService implements OnModuleInit {
     actionUrl?: string | null;
   }): Promise<Notification | null> {
     if (!this.prisma?.notification?.create) return null;
+
+    // Deduplication check: Do not create duplicate notification for same user and titleAr
+    // created within the last 60 seconds (or exact duplicate title and body)
+    const sixtySecondsAgo = new Date(Date.now() - 60 * 1000);
     const existing = await this.prisma.notification.findFirst({
       where: {
         userId: data.userId,
-        type: data.type,
         titleAr: data.titleAr,
+        OR: [
+          { createdAt: { gte: sixtySecondsAgo } },
+          { bodyAr: data.bodyAr },
+          { type: data.type },
+        ],
       },
+      orderBy: { createdAt: 'desc' },
     });
     if (existing) return existing;
 
@@ -402,6 +458,22 @@ export class JourneyEngineService implements OnModuleInit {
   }
 
   async evaluateProgress(userId: string): Promise<UserJourneyState> {
+    const ongoing = this.activeEvaluations.get(userId);
+    if (ongoing) {
+      return ongoing;
+    }
+
+    const evaluationPromise = this.internalEvaluateProgress(userId);
+    this.activeEvaluations.set(userId, evaluationPromise);
+
+    try {
+      return await evaluationPromise;
+    } finally {
+      this.activeEvaluations.delete(userId);
+    }
+  }
+
+  private async internalEvaluateProgress(userId: string): Promise<UserJourneyState> {
     const state = await this.getOrCreateUserState(userId);
     const currentNode = await this.getNodeByCode(state.currentNodeCode);
     const currentNodeAlreadyCompleted = (
@@ -1092,6 +1164,7 @@ export class JourneyEngineService implements OnModuleInit {
     userId: string,
     limit = 30,
   ): Promise<{ items: Notification[]; unreadCount: number }> {
+    await this.deduplicateNotifications(userId).catch(() => 0);
     const safeLimit = Math.min(100, Math.max(1, Number(limit) || 30));
     const [items, unreadCount] = await Promise.all([
       this.prisma.notification.findMany({

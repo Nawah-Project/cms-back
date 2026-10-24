@@ -21,6 +21,7 @@ export interface DashboardStats {
   active: {
     total: number;
     applied: number;
+    assignment: number;
     interview: number;
     decision: number;
   };

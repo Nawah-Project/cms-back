@@ -1,5 +1,6 @@
 export enum ApplicationStage {
   APPLIED = 'APPLIED',
+  ASSIGNMENT = 'ASSIGNMENT',
   INTERVIEW = 'INTERVIEW',
   DECISION = 'DECISION',
   CLOSED = 'CLOSED',

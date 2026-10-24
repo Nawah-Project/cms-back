@@ -2,7 +2,9 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   Application as DbApplication,
   ApplicationOutcome as DbApplicationOutcome,
@@ -29,6 +31,8 @@ export interface DashboardStats {
     withdrawn: number;
     noResponse: number;
   };
+  expiringSoonCount: number;
+  recentNoResponseCount: number;
   recentApplications: Array<
     Pick<
       DbApplication,
@@ -46,6 +50,7 @@ export interface DashboardStats {
 export interface PaginatedApplications {
   data: DbApplication[];
   total: number;
+  unfilteredTotal: number;
   page: number;
   limit: number;
   totalPages: number;
@@ -53,7 +58,10 @@ export interface PaginatedApplications {
 
 @Injectable()
 export class ApplicationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly eventEmitter?: EventEmitter2,
+  ) {}
 
   private formatDate(dateStr?: string): string {
     if (!dateStr) return new Date().toISOString().split('T')[0];
@@ -96,7 +104,17 @@ export class ApplicationsService {
       );
     }
     this.validateStageAndOutcome(stage, outcome);
-    return this.prisma.application.create({
+
+    const journeyState = this.prisma?.userJourneyState?.findUnique
+      ? await this.prisma.userJourneyState.findUnique({
+          where: { userId },
+          select: { currentWeek: true },
+        })
+      : null;
+    const journeyWeek =
+      createDto.journeyWeek ?? journeyState?.currentWeek ?? 1;
+
+    const created = await this.prisma.application.create({
       data: {
         userId,
         companyName: createDto.companyName.trim(),
@@ -107,9 +125,35 @@ export class ApplicationsService {
         jobUrl: createDto.jobUrl?.trim() || null,
         stage,
         outcome,
+        isTailored: createDto.isTailored ?? false,
+        journeyWeek,
+        hasAssignment: createDto.hasAssignment ?? false,
+        interviewDate: createDto.interviewDate
+          ? new Date(createDto.interviewDate)
+          : null,
+        ...(createDto.prepChecklist !== undefined
+          ? { prepChecklist: createDto.prepChecklist as Prisma.InputJsonValue }
+          : {}),
+        interviewNotes: createDto.interviewNotes?.trim() || null,
+        sharedWithGroup: createDto.sharedWithGroup ?? false,
         closedAt: stage === ApplicationStage.CLOSED ? new Date() : null,
       },
     });
+
+    this.eventEmitter?.emit('application.created', {
+      userId,
+      applicationId: created.id,
+      companyName: created.companyName,
+      jobTitle: created.jobTitle,
+      stage: created.stage,
+      outcome: created.outcome,
+      isTailored: created.isTailored,
+      journeyWeek: created.journeyWeek,
+      hasAssignment: created.hasAssignment,
+      sharedWithGroup: created.sharedWithGroup,
+    });
+
+    return created;
   }
 
   async findAll(
@@ -118,12 +162,16 @@ export class ApplicationsService {
   ): Promise<PaginatedApplications> {
     const page = query.page && query.page > 0 ? query.page : 1;
     const limit =
-      query.limit && query.limit > 0 ? Math.min(query.limit, 100) : 20;
+      query.limit && query.limit > 0 ? Math.min(query.limit, 1000) : 20;
     const sortOrder = query.sortOrder?.toUpperCase() === 'ASC' ? 'asc' : 'desc';
     const search = query.search?.trim();
     const where: Prisma.ApplicationWhereInput = {
       userId,
-      ...(query.stage ? { stage: query.stage } : {}),
+      ...(query.stage
+        ? query.stage === 'ACTIVE'
+          ? { stage: { not: ApplicationStage.CLOSED } }
+          : { stage: query.stage }
+        : {}),
       ...(query.outcome ? { outcome: query.outcome } : {}),
       ...(search
         ? {
@@ -134,7 +182,7 @@ export class ApplicationsService {
           }
         : {}),
     };
-    const [data, total] = await this.prisma.$transaction([
+    const [data, total, unfilteredTotal] = await this.prisma.$transaction([
       this.prisma.application.findMany({
         where,
         orderBy: [{ applicationDate: sortOrder }, { createdAt: 'desc' }],
@@ -142,8 +190,16 @@ export class ApplicationsService {
         take: limit,
       }),
       this.prisma.application.count({ where }),
+      this.prisma.application.count({ where: { userId } }),
     ]);
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+    return {
+      data,
+      total,
+      unfilteredTotal,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async findOne(userId: string, id: string): Promise<DbApplication> {
@@ -160,17 +216,21 @@ export class ApplicationsService {
     id: string,
     updateDto: UpdateApplicationDto,
   ): Promise<DbApplication> {
-    if (updateDto.outcome === ApplicationOutcome.NO_RESPONSE) {
-      throw new BadRequestException(
-        'NO_RESPONSE is assigned automatically after seven days without a response',
-      );
-    }
     return this.prisma.$transaction(async (transaction) => {
       const application = await transaction.application.findFirst({
         where: { id, userId },
       });
       if (!application)
         throw new NotFoundException(`Application with ID "${id}" not found`);
+      if (
+        updateDto.outcome === ApplicationOutcome.NO_RESPONSE &&
+        (application.outcome as unknown as ApplicationOutcome) !==
+          ApplicationOutcome.NO_RESPONSE
+      ) {
+        throw new BadRequestException(
+          'NO_RESPONSE is assigned automatically after seven days without a response',
+        );
+      }
       const previousStage = application.stage;
       const nextStage = (updateDto.stage ??
         application.stage) as ApplicationStage;
@@ -222,18 +282,68 @@ export class ApplicationsService {
         const jobUrl = updateDto.jobUrl?.trim() || null;
         if (jobUrl !== application.jobUrl) data.jobUrl = jobUrl;
       }
-      if (nextStage !== application.stage) data.stage = nextStage;
-      if (nextOutcome !== application.outcome) data.outcome = nextOutcome;
-      if (nextStage !== application.stage) {
+      if (
+        (nextStage as unknown as DbApplication['stage']) !== application.stage
+      )
+        data.stage = nextStage;
+      if (
+        (nextOutcome as unknown as DbApplication['outcome']) !==
+        application.outcome
+      )
+        data.outcome = nextOutcome;
+      if (
+        (nextStage as unknown as DbApplication['stage']) !== application.stage
+      ) {
         data.closedAt =
           nextStage === ApplicationStage.CLOSED ? new Date() : null;
+      }
+      if (
+        updateDto.isTailored !== undefined &&
+        updateDto.isTailored !== application.isTailored
+      ) {
+        data.isTailored = updateDto.isTailored;
+      }
+      if (
+        updateDto.hasAssignment !== undefined &&
+        updateDto.hasAssignment !== application.hasAssignment
+      ) {
+        data.hasAssignment = updateDto.hasAssignment;
+      }
+      if (updateDto.interviewDate !== undefined) {
+        const nextInterviewDate = updateDto.interviewDate
+          ? new Date(updateDto.interviewDate)
+          : null;
+        const prevInterviewTime = application.interviewDate?.getTime() ?? null;
+        const nextInterviewTime = nextInterviewDate?.getTime() ?? null;
+        if (prevInterviewTime !== nextInterviewTime) {
+          data.interviewDate = nextInterviewDate;
+        }
+      }
+      if (updateDto.prepChecklist !== undefined) {
+        data.prepChecklist =
+          updateDto.prepChecklist === null
+            ? Prisma.DbNull
+            : (updateDto.prepChecklist as Prisma.InputJsonValue);
+      }
+      if (updateDto.interviewNotes !== undefined) {
+        const interviewNotes = updateDto.interviewNotes?.trim() || null;
+        if (interviewNotes !== application.interviewNotes) {
+          data.interviewNotes = interviewNotes;
+        }
+      }
+      if (
+        updateDto.sharedWithGroup !== undefined &&
+        updateDto.sharedWithGroup !== application.sharedWithGroup
+      ) {
+        data.sharedWithGroup = updateDto.sharedWithGroup;
       }
       if (Object.keys(data).length === 0) return application;
       const updated = await transaction.application.update({
         where: { id },
         data,
       });
-      if (previousStage.toString() !== nextStage.toString()) {
+      const stageChanged = previousStage.toString() !== nextStage.toString();
+      if (stageChanged) {
         await transaction.applicationStageTransition.create({
           data: {
             applicationId: application.id,
@@ -247,6 +357,32 @@ export class ApplicationsService {
           },
         });
       }
+
+      this.eventEmitter?.emit('application.updated', {
+        userId,
+        applicationId: updated.id,
+        companyName: updated.companyName,
+        jobTitle: updated.jobTitle,
+        stage: updated.stage,
+        outcome: updated.outcome,
+        hasAssignment: updated.hasAssignment,
+        isTailored: updated.isTailored,
+        sharedWithGroup: updated.sharedWithGroup,
+      });
+
+      if (stageChanged) {
+        this.eventEmitter?.emit('application.stage_changed', {
+          userId,
+          applicationId: updated.id,
+          fromStage: previousStage,
+          toStage: nextStage,
+          outcome:
+            nextStage === ApplicationStage.CLOSED
+              ? (nextOutcome as DbApplicationOutcome)
+              : null,
+        });
+      }
+
       return updated;
     });
   }
@@ -264,7 +400,16 @@ export class ApplicationsService {
   }
 
   async getDashboard(userId: string): Promise<DashboardStats> {
-    const [groups, recentApplications] = await Promise.all([
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const fourDaysAgo = new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000);
+
+    const [
+      groups,
+      recentApplications,
+      expiringSoonCount,
+      recentNoResponseCount,
+    ] = await Promise.all([
       this.prisma.application.groupBy({
         by: ['stage', 'outcome'],
         where: { userId },
@@ -284,8 +429,27 @@ export class ApplicationsService {
         orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
         take: 4,
       }),
+      this.prisma.application.count({
+        where: {
+          userId,
+          stage: { not: ApplicationStage.CLOSED },
+          updatedAt: {
+            gte: sevenDaysAgo,
+            lte: fourDaysAgo,
+          },
+        },
+      }),
+      this.prisma.application.count({
+        where: {
+          userId,
+          stage: ApplicationStage.CLOSED,
+          outcome: ApplicationOutcome.NO_RESPONSE,
+          closedAt: { gte: sevenDaysAgo },
+        },
+      }),
     ]);
     let applied = 0,
+      assignment = 0,
       interview = 0,
       decision = 0;
     let accepted = 0,
@@ -295,6 +459,7 @@ export class ApplicationsService {
     for (const row of groups) {
       const count = row._count._all;
       if (row.stage === 'APPLIED') applied += count;
+      else if (row.stage === 'ASSIGNMENT') assignment += count;
       else if (row.stage === 'INTERVIEW') interview += count;
       else if (row.stage === 'DECISION') decision += count;
       else if (row.stage === 'CLOSED') {
@@ -306,8 +471,9 @@ export class ApplicationsService {
     }
     return {
       active: {
-        total: applied + interview + decision,
+        total: applied + assignment + interview + decision,
         applied,
+        assignment,
         interview,
         decision,
       },
@@ -318,6 +484,8 @@ export class ApplicationsService {
         withdrawn,
         noResponse,
       },
+      expiringSoonCount,
+      recentNoResponseCount,
       recentApplications,
     };
   }

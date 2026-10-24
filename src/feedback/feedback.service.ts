@@ -2,9 +2,11 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
+  EmailType,
   FeedbackContext,
   FeedbackTag,
   FeedbackVisibility,
@@ -12,6 +14,7 @@ import {
   UserRole,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { EmailSenderService } from '../auth/email-sender.service';
 import {
   AdminFeedbackQueryDto,
   CreateFeedbackDto,
@@ -40,7 +43,12 @@ const feedbackInclude = {
 
 @Injectable()
 export class FeedbackService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(FeedbackService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly emailSender: EmailSenderService,
+  ) {}
 
   private async assertMember(userId: string) {
     const member = await this.prisma.user.findFirst({
@@ -103,24 +111,30 @@ export class FeedbackService {
       context: dto.context ?? FeedbackContext.GENERAL,
       tags: [...new Set(dto.tags ?? [])] as FeedbackTag[],
       resource: dto.resource,
+      resources: dto.resources || (dto.resource ? [dto.resource] : []),
+      unlockTriggerCode: dto.unlockTriggerCode?.trim() || null,
+      promptTemplate: dto.promptTemplate?.trim() || null,
     };
   }
 
-  private async createResource(
+  private async createResources(
     tx: Prisma.TransactionClient,
     feedbackId: string,
-    resource: CreateFeedbackDto['resource'],
+    resources?: CreateFeedbackDto['resource'][] | null,
   ) {
-    if (!resource) return;
-    await tx.feedbackResource.create({
-      data: {
-        feedbackId,
-        title: resource.title.trim(),
-        url: resource.url,
-        type: resource.type?.trim() || null,
-        description: resource.description?.trim() || null,
-      },
-    });
+    if (!resources || !resources.length) return;
+    for (const resource of resources) {
+      if (!resource?.title || !resource?.url) continue;
+      await tx.feedbackResource.create({
+        data: {
+          feedbackId,
+          title: resource.title.trim(),
+          url: resource.url,
+          type: resource.type?.trim() || null,
+          description: resource.description?.trim() || null,
+        },
+      });
+    }
   }
 
   private present(
@@ -139,6 +153,9 @@ export class FeedbackService {
       tags: post.tags,
       author: post.author,
       resources: post.resources,
+      unlockTriggerCode: post.unlockTriggerCode ?? null,
+      promptTemplate: post.promptTemplate ?? null,
+      tierLevel: post.tierLevel ?? 'BASIC',
       publishedAt: post.publishedAt,
       updatedAt: post.updatedAt,
       archivedAt: post.archivedAt,
@@ -169,14 +186,60 @@ export class FeedbackService {
           groupId: data.groupId,
           context: data.context,
           tags: data.tags,
+          unlockTriggerCode: data.unlockTriggerCode,
+          promptTemplate: data.promptTemplate,
         },
       });
-      await this.createResource(tx, created.id, data.resource);
+      await this.createResources(tx, created.id, data.resources);
       return tx.feedbackPost.findUniqueOrThrow({
         where: { id: created.id },
         include: feedbackInclude,
       });
     });
+
+    if (dto.sendEmailNotification) {
+      if (data.targetUserId) {
+        try {
+          const target = await this.prisma.user.findUnique({
+            where: { id: data.targetUserId },
+            select: { id: true, name: true, email: true },
+          });
+          if (target && target.email) {
+            const appUrl = process.env.APP_URL || 'http://localhost:5173';
+            const ctaLink = `${appUrl}/guidance`;
+            const subject = `ملاحظة وتوجيه جديد من المرشد: ${data.title}`;
+            const html = `
+              <div dir="rtl" style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px;">
+                <h2 style="color: #0f172a; margin-top: 0;">مرحباً ${target.name}،</h2>
+                <p style="color: #475569; font-size: 15px; line-height: 1.6;">قام المرشد بإضافة ملاحظة توجيهية جديدة خاصة بك بخصوص رحلتك في البرنامج:</p>
+                <div style="background: #f8fafc; border-right: 4px solid #0284c7; padding: 16px; margin: 20px 0; border-radius: 6px;">
+                  <h4 style="margin: 0 0 8px 0; color: #0f172a;">${data.title}</h4>
+                  <p style="margin: 0; color: #334155; white-space: pre-wrap; font-size: 14px;">${data.content}</p>
+                </div>
+                <div style="text-align: center; margin-top: 24px;">
+                  <a href="${ctaLink}" style="display: inline-block; background: #0284c7; color: #ffffff; text-decoration: none; padding: 10px 24px; border-radius: 8px; font-weight: bold; font-size: 14px;">عرض في قسم التوجيه</a>
+                </div>
+              </div>
+            `;
+            await this.emailSender.sendGeneralMail({
+              to: target.email,
+              recipientName: target.name,
+              subject,
+              text: `${subject}\n\n${data.content}\n\n${ctaLink}`,
+              html,
+              type: EmailType.MENTOR_DIRECT,
+              userId: target.id,
+              channel: 'EMAIL',
+            });
+          }
+        } catch (err) {
+          this.logger.warn(
+            `Failed to send guidance email to target ${data.targetUserId}: ${err.message}`,
+          );
+        }
+      }
+    }
+
     return this.present(post);
   }
 
@@ -201,12 +264,21 @@ export class FeedbackService {
         dto.resource === undefined
           ? (existing.resources[0] ?? null)
           : dto.resource,
+      resources: dto.resources === undefined ? existing.resources : dto.resources,
+      unlockTriggerCode:
+        dto.unlockTriggerCode === undefined
+          ? existing.unlockTriggerCode
+          : dto.unlockTriggerCode,
+      promptTemplate:
+        dto.promptTemplate === undefined
+          ? existing.promptTemplate
+          : dto.promptTemplate,
     };
     const data = await this.buildData(existing.authorId, complete);
     const post = await this.prisma.$transaction(async (tx) => {
-      if (dto.resource !== undefined) {
+      if (dto.resources !== undefined || dto.resource !== undefined) {
         await tx.feedbackResource.deleteMany({ where: { feedbackId: id } });
-        await this.createResource(tx, id, data.resource);
+        await this.createResources(tx, id, data.resources);
       }
       return tx.feedbackPost.update({
         where: { id },
@@ -218,6 +290,8 @@ export class FeedbackService {
           groupId: data.groupId,
           context: data.context,
           tags: data.tags,
+          unlockTriggerCode: data.unlockTriggerCode,
+          promptTemplate: data.promptTemplate,
         },
         include: feedbackInclude,
       });

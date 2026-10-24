@@ -79,6 +79,25 @@ export class CreateFeedbackDto {
   @ValidateNested()
   @Type(() => FeedbackResourceDto)
   resource?: FeedbackResourceDto | null;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => FeedbackResourceDto)
+  resources?: FeedbackResourceDto[] | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  unlockTriggerCode?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  promptTemplate?: string | null;
+
+  @IsOptional()
+  sendEmailNotification?: boolean;
 }
 
 export class UpdateFeedbackDto extends PartialType(CreateFeedbackDto) {}

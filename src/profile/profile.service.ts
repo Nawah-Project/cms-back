@@ -176,6 +176,45 @@ export class ProfileService
             where: { userId },
             select: { storageKey: true },
           });
+
+          let newCvVersion: number | null = null;
+          if (previous) {
+            const journeyState = await transaction.userJourneyState.findUnique({
+              where: { userId },
+            });
+            const currentVersion = journeyState?.cvVersionNumber || 1;
+            newCvVersion = currentVersion + 1;
+
+            if (journeyState) {
+              await transaction.userJourneyState.update({
+                where: { userId },
+                data: { cvVersionNumber: newCvVersion },
+              });
+            }
+
+            const appCount = await transaction.application.count({
+              where: { userId },
+            });
+
+            await transaction.sideTaskSubmission.create({
+              data: {
+                userId,
+                nodeCode: journeyState?.currentNodeCode || 'CV_UPDATE',
+                journeyWeek: journeyState?.currentWeek || 1,
+                type: 'WEEKLY_REVIEW',
+                newCvUploaded: true,
+                reviewSummary: JSON.stringify({
+                  isUserChange: true,
+                  category: 'CV_UPDATE',
+                  title: `تحديث السيرة الذاتية (CV v${newCvVersion})`,
+                  note: `تم رفع ملف سيرة ذاتية جديد (${originalName})`,
+                  appCountAtChange: appCount,
+                  cvVersion: newCvVersion,
+                }),
+              },
+            });
+          }
+
           const cv = await transaction.userCv.upsert({
             where: { userId },
             create: {

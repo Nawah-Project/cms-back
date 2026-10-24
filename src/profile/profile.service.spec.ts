@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await */
+/* eslint-disable @typescript-eslint/no-unsafe-call */
 import { ForbiddenException, PayloadTooLargeException } from '@nestjs/common';
 import {
   mkdtemp,

@@ -26,6 +26,7 @@ export interface MemberProgress {
   lastUpdatedAt: string | null;
   counts: {
     applied: number;
+    assignment: number;
     interview: number;
     decision: number;
     closed: number;
@@ -34,6 +35,12 @@ export interface MemberProgress {
 
 export interface MemberActivity {
   id: string;
+  activityType?:
+    | 'APPLICATION'
+    | 'SHARED_APPLICATION'
+    | 'STAGE_TRANSITION'
+    | 'SIDE_TASK';
+  sharedWithGroup?: boolean;
   member: MemberSummary;
   memberId: string;
   application: {
@@ -42,7 +49,18 @@ export interface MemberActivity {
     jobTitle: string;
     jobUrl: string | null;
     applicationMethod: string | null;
+    sharedWithGroup?: boolean;
+    isTailored?: boolean;
   };
+  sideTask?: {
+    id: string;
+    type: string;
+    nodeCode: string;
+    journeyWeek: number;
+    postUrl: string | null;
+    postTopic: string | null;
+    reviewSummary: string | null;
+  } | null;
   fromStage: ApplicationStage | null;
   toStage: ApplicationStage;
   outcome: ApplicationOutcome | null;
@@ -123,7 +141,7 @@ export class MembersService {
     const countsByUser = new Map<string, MemberProgress['counts']>(
       memberIds.map((id) => [
         id,
-        { applied: 0, interview: 0, decision: 0, closed: 0 },
+        { applied: 0, assignment: 0, interview: 0, decision: 0, closed: 0 },
       ]),
     );
     for (const row of groupedCounts) {
@@ -200,7 +218,7 @@ export class MembersService {
     const transitionFilter: Prisma.ApplicationStageTransitionWhereInput = {
       userId: { in: memberIds },
     };
-    const [transitions, applications] = await Promise.all([
+    const [transitions, applications, sideTasks] = await Promise.all([
       this.prisma.applicationStageTransition.findMany({
         where: transitionFilter,
         select: {
@@ -218,6 +236,8 @@ export class MembersService {
               jobTitle: true,
               jobUrl: true,
               applicationMethod: true,
+              sharedWithGroup: true,
+              isTailored: true,
             },
           },
         },
@@ -235,6 +255,8 @@ export class MembersService {
           applicationMethod: true,
           stage: true,
           outcome: true,
+          sharedWithGroup: true,
+          isTailored: true,
           createdAt: true,
           transitions: {
             select: { fromStage: true },
@@ -246,10 +268,34 @@ export class MembersService {
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         take: limit,
       }),
+      this.prisma.sideTaskSubmission?.findMany
+        ? this.prisma.sideTaskSubmission.findMany({
+            where: {
+              userId: { in: memberIds },
+              sharedInGroup: true,
+            },
+            select: {
+              id: true,
+              userId: true,
+              nodeCode: true,
+              journeyWeek: true,
+              type: true,
+              postUrl: true,
+              postTopic: true,
+              reviewSummary: true,
+              createdAt: true,
+              user: { select: { id: true, name: true } },
+            },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            take: limit,
+          })
+        : Promise.resolve([]),
     ]);
     const feed: MemberActivity[] = [
       ...transitions.map((row) => ({
         id: `transition:${row.id}`,
+        activityType: 'STAGE_TRANSITION' as const,
+        sharedWithGroup: Boolean(row.application.sharedWithGroup),
         member: { ...row.user, avatar: null },
         memberId: row.userId,
         application: {
@@ -258,7 +304,10 @@ export class MembersService {
           jobTitle: row.application.jobTitle,
           jobUrl: row.application.jobUrl,
           applicationMethod: row.application.applicationMethod,
+          sharedWithGroup: Boolean(row.application.sharedWithGroup),
+          isTailored: Boolean(row.application.isTailored),
         },
+        sideTask: null,
         fromStage: row.fromStage,
         toStage: row.toStage,
         outcome: row.outcome,
@@ -266,6 +315,10 @@ export class MembersService {
       })),
       ...applications.map((row) => ({
         id: `application:${row.id}`,
+        activityType: (row.sharedWithGroup
+          ? 'SHARED_APPLICATION'
+          : 'APPLICATION') as 'SHARED_APPLICATION' | 'APPLICATION',
+        sharedWithGroup: Boolean(row.sharedWithGroup),
         member: { ...row.user, avatar: null },
         memberId: row.userId,
         application: {
@@ -274,7 +327,10 @@ export class MembersService {
           jobTitle: row.jobTitle,
           jobUrl: row.jobUrl,
           applicationMethod: row.applicationMethod,
+          sharedWithGroup: Boolean(row.sharedWithGroup),
+          isTailored: Boolean(row.isTailored),
         },
+        sideTask: null,
         fromStage: null,
         toStage: row.transitions?.[0]?.fromStage ?? row.stage,
         outcome:
@@ -282,6 +338,41 @@ export class MembersService {
           row.outcome === ApplicationOutcome.NONE
             ? null
             : row.outcome,
+        changedAt: row.createdAt.toISOString(),
+      })),
+      ...sideTasks.map((row) => ({
+        id: `sidetask:${row.id}`,
+        activityType: 'SIDE_TASK' as const,
+        sharedWithGroup: true,
+        member: { ...row.user, avatar: null },
+        memberId: row.userId,
+        application: {
+          id: row.id,
+          companyName:
+            row.type === 'LINKEDIN_POST'
+              ? 'LinkedIn Post'
+              : row.type === 'WEEKLY_REVIEW'
+                ? `Week ${row.journeyWeek} Review`
+                : 'Outreach Contact',
+          jobTitle:
+            row.postTopic ||
+            row.reviewSummary ||
+            `Completed ${row.nodeCode} (${row.type})`,
+          jobUrl: row.postUrl ?? null,
+          applicationMethod: 'LINKEDIN',
+        },
+        sideTask: {
+          id: row.id,
+          type: row.type,
+          nodeCode: row.nodeCode,
+          journeyWeek: row.journeyWeek,
+          postUrl: row.postUrl ?? null,
+          postTopic: row.postTopic ?? null,
+          reviewSummary: row.reviewSummary ?? null,
+        },
+        fromStage: null,
+        toStage: ApplicationStage.APPLIED,
+        outcome: null,
         changedAt: row.createdAt.toISOString(),
       })),
     ];
@@ -346,7 +437,11 @@ export class MembersService {
         ).toISOString()
       : null;
     const companies = [
-      ...new Set(applications.map((application) => application.companyName)),
+      ...new Set(
+        applications
+          .map((application) => application.companyName.trim().toLowerCase())
+          .filter(Boolean),
+      ),
     ];
     const otherUserIds = memberIds.filter((id) => id !== targetMemberId);
     const shared =
@@ -354,7 +449,9 @@ export class MembersService {
         ? await this.prisma.application.findMany({
             where: {
               userId: { in: otherUserIds },
-              companyName: { in: companies },
+              OR: companies.map((name) => ({
+                companyName: { equals: name.trim(), mode: 'insensitive' },
+              })),
             },
             select: { userId: true, companyName: true },
             distinct: ['userId', 'companyName'],
@@ -373,9 +470,12 @@ export class MembersService {
       for (const row of shared) {
         const summary = membersById.get(row.userId);
         if (!summary) continue;
-        const list = sharedCompanyByName.get(row.companyName) ?? [];
-        list.push(summary);
-        sharedCompanyByName.set(row.companyName, list);
+        const normalizedKey = row.companyName.trim().toLowerCase();
+        const list = sharedCompanyByName.get(normalizedKey) ?? [];
+        if (!list.some((m) => m.id === summary.id)) {
+          list.push(summary);
+        }
+        sharedCompanyByName.set(normalizedKey, list);
       }
     }
     return {
@@ -387,17 +487,20 @@ export class MembersService {
         hasCv: Boolean(member.cv),
         lastUpdatedAt,
       },
-      applications: applications.map((application) => ({
-        ...application,
-        outcome:
-          application.outcome === ApplicationOutcome.NONE
-            ? null
-            : application.outcome,
-        updatedAt: application.updatedAt.toISOString(),
-        sharedCompany:
-          (sharedCompanyByName.get(application.companyName)?.length ?? 0) > 0,
-        otherMembers: sharedCompanyByName.get(application.companyName) ?? [],
-      })),
+      applications: applications.map((application) => {
+        const key = application.companyName.trim().toLowerCase();
+        const otherMembers = sharedCompanyByName.get(key) ?? [];
+        return {
+          ...application,
+          outcome:
+            application.outcome === ApplicationOutcome.NONE
+              ? null
+              : application.outcome,
+          updatedAt: application.updatedAt.toISOString(),
+          sharedCompany: otherMembers.length > 0,
+          otherMembers,
+        };
+      }),
     };
   }
 }

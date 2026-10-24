@@ -416,7 +416,7 @@ export class JourneyEngineService implements OnModuleInit {
         titleEn: 'New Career Insight Unlocked!',
         bodyAr: `تم فتح الدليل الإرشادي (${currentNode.unlocksInsightCode}) بعد إتمام ${currentNode.titleAr}.`,
         bodyEn: `Insight (${currentNode.unlocksInsightCode}) has been unlocked after completing ${currentNode.titleEn}.`,
-        actionUrl: '/professional-development/feedback',
+        actionUrl: `/professional-development?guidance=${currentNode.unlocksInsightCode}`,
       });
     }
 
@@ -555,7 +555,7 @@ export class JourneyEngineService implements OnModuleInit {
         'بناءً على ترشحك لمقابلة أو استلام تاسك تقني، تم فتح دليل التحضير المتقدم وقوائم المراجعة.',
       bodyEn:
         'Based on your interview stage or technical assignment, the Advanced Interview & Assignment Prep guide is now unlocked.',
-      actionUrl: '/professional-development/feedback',
+      actionUrl: '/professional-development?guidance=INSIGHT_INTERVIEW_ADVANCED',
     });
 
     this.eventEmitter?.emit('journey.adv_prep_unlocked', {

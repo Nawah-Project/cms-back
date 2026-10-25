@@ -546,12 +546,12 @@ export class JourneyEngineService implements OnModuleInit {
       await this.createNotificationSafe({
         userId,
         type: 'PROFESSIONAL_DEVELOPMENT_UNLOCKED',
-        titleAr: 'تم فتح قسم التطوير المهني والمهام!',
+        titleAr: 'إرشاداتك المهنية الأولى متاحة!',
         titleEn: 'Professional Development Unlocked!',
         bodyAr:
-          'أكملت المهمة صفر! تم فتح لوحة مهامك الشخصية وملاحظات الموجهين الآن.',
+          'أكملت المهمة صفر! إرشادات السيرة الذاتية متاحة؛ المهام المهنية بتتفتح بعد إرشاد تنظيم الوقت في الأسبوع الثالث.',
         bodyEn:
-          'Task 0 completed! Your personal tasks board and mentor guidance are now unlocked.',
+          'Task 0 completed! Initial CV guidance is available. Professional tasks unlock after reading Week 3 time-management guidance.',
         actionUrl: '/professional-development',
       });
     }

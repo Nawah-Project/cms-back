@@ -21,19 +21,20 @@ export class JwtAuthGuard implements CanActivate {
     const header = request.headers.authorization;
     if (!token && header?.startsWith('Bearer ')) {
       request.user = await this.auth.verifyAccessToken(header.slice(7));
+      await this.auth.assertProgramReady(request.user.id, request.path);
       return true;
     }
 
     try {
       request.user = await this.auth.verifyAccessToken(token || '');
-      return true;
     } catch (accessError) {
       const refreshToken = cookies?.[REFRESH_COOKIE];
       if (!refreshToken) throw accessError;
       const tokens = await this.auth.refresh(refreshToken);
       setAuthCookies(response, tokens);
       request.user = await this.auth.verifyAccessToken(tokens.accessToken);
-      return true;
     }
+    await this.auth.assertProgramReady(request.user!.id, request.path);
+    return true;
   }
 }

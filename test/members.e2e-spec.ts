@@ -7,6 +7,7 @@ import { AppModule } from '../src/app.module';
 import { ApplicationOutcome } from '../src/applications/enums/application-outcome.enum';
 import { ApplicationStage } from '../src/applications/enums/application-stage.enum';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { prepareProgramMember } from './program-fixture';
 import { resetTestDatabase } from './reset-test-database';
 
 interface ProgressMember {
@@ -48,7 +49,9 @@ describe('Members progress (e2e)', () => {
   const agents = new Map<string, ReturnType<typeof request.agent>>();
   const ids = new Map<string, string>();
 
+  const previousAssignment=process.env.ASSIGN_GROUP_ON_REGISTER;
   beforeAll(async () => {
+    process.env.ASSIGN_GROUP_ON_REGISTER='true';
     process.env.NODE_ENV = 'test';
     const module = await Test.createTestingModule({
       imports: [AppModule],
@@ -88,6 +91,7 @@ describe('Members progress (e2e)', () => {
           password: 'SecurePass123!',
         })
         .expect(201);
+      await prepareProgramMember(prisma, result.body.id as string);
       agents.set(account.key, agent);
       ids.set(account.key, result.body.id as string);
     }
@@ -303,17 +307,19 @@ describe('Members progress (e2e)', () => {
       userId: ids.get('current'),
       name: 'Nora Current',
       avatar: null,
-      portfolioUrl: null,
-      hasCv: false,
+      portfolioUrl: 'https://example.com/synthetic',
+      hasCv: true,
+      hasAcceptedApplication: true,
       isCurrentUser: true,
       lastUpdatedAt: expect.any(String),
-      counts: { applied: 2, interview: 1, decision: 2, closed: 2 },
+      counts: { applied: 2, assignment: 0, interview: 1, decision: 2, closed: 2 },
     });
     const beta = response.body.find(
       (member: ProgressMember) => member.userId === ids.get('beta'),
     );
     expect(beta!.counts).toEqual({
       applied: 0,
+      assignment: 0,
       interview: 1,
       decision: 1,
       closed: 0,
@@ -330,6 +336,7 @@ describe('Members progress (e2e)', () => {
     );
     expect(alpha!.counts).toEqual({
       applied: 0,
+      assignment: 0,
       interview: 0,
       decision: 0,
       closed: 0,
@@ -345,6 +352,7 @@ describe('Members progress (e2e)', () => {
       expect(Object.keys(member).sort()).toEqual([
         'avatar',
         'counts',
+        'hasAcceptedApplication',
         'hasCv',
         'isCurrentUser',
         'lastUpdatedAt',
@@ -355,6 +363,7 @@ describe('Members progress (e2e)', () => {
       ]);
       expect(Object.keys(member.counts).sort()).toEqual([
         'applied',
+        'assignment',
         'closed',
         'decision',
         'interview',
@@ -391,7 +400,7 @@ describe('Members progress (e2e)', () => {
   it('uses one application aggregation query for the cohort instead of one query per member', async () => {
     const querySpy = jest.spyOn(prisma.application, 'groupBy');
     await agents.get('current')!.get('/members/progress').expect(200);
-    expect(querySpy).toHaveBeenCalledTimes(2);
+    expect(querySpy).toHaveBeenCalledTimes(3);
     querySpy.mockRestore();
   });
 });

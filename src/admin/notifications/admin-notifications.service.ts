@@ -521,7 +521,7 @@ export class AdminNotificationsService {
     ]);
 
     return {
-      items,
+      items: items.map(item => item.type === EmailType.VERIFICATION_OTP ? { ...item, subject: 'Nawah verification', bodyText: null, bodyHtml: null, errorMessage: item.errorMessage ? 'Verification delivery failed' : null } : item),
       total,
       page,
       limit,
@@ -534,6 +534,7 @@ export class AdminNotificationsService {
       where: { id: logId },
     });
     if (!log) throw new NotFoundException('السجل غير موجود');
+    if(log.type===EmailType.VERIFICATION_OTP) throw new BadRequestException('Request a fresh code through the authenticated verification flow; expired OTP messages cannot be retried');
 
     await this.emailSender.sendGeneralMail({
       to: log.recipientEmail,

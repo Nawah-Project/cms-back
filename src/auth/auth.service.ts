@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Optional,
   UnauthorizedException,
@@ -35,6 +36,7 @@ export interface PublicUser {
   role?: UserRole;
   emailVerified?: boolean;
   targetJobTitle?: string | null;
+  verificationDelivery?: 'SENT' | 'FAILED';
 }
 
 export interface TokenPair {
@@ -87,15 +89,54 @@ export class AuthService {
   }
 
   private shouldRequireEmailOtp(): boolean {
-    return (
-      process.env.NODE_ENV !== 'production' ||
-      this.emailSender.isSmtpConfigured() ||
-      process.env.FORCE_EMAIL_OTP === 'true'
-    );
+    return true;
+  }
+
+  async assertProgramReady(userId: string, path: string): Promise<void> {
+    // Onboarding and session recovery remain accessible before program readiness.
+    if (
+      !/^\/(?:api\/)?(?:applications|dashboard|journey|tasks|members|feedback|notifications)(?:\/|$)/.test(
+        path,
+      )
+    )
+      return;
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        role: true,
+        emailVerified: true,
+        targetJobTitle: true,
+        portfolioUrl: true,
+        cv: { select: { id: true } },
+      },
+    });
+    if (user?.role === 'ADMIN') return;
+    if (!user?.emailVerified)
+      throw new ForbiddenException(
+        'Verify your email before starting the program',
+      );
+    if (!user.targetJobTitle?.trim() || !user.portfolioUrl || !user.cv)
+      throw new ForbiddenException(
+        'Complete your profile and upload a CV before starting the program',
+      );
+  }
+
+  private async deliverOtp(params: {
+    to: string;
+    name: string;
+    code: string;
+    expiresInMinutes: number;
+  }): Promise<'SENT' | 'FAILED'> {
+    try {
+      await this.emailSender.sendVerificationOtp(params);
+      return 'SENT';
+    } catch {
+      return 'FAILED';
+    } // Account exists: keep authenticated verification/retry available.
   }
 
   private toPublicUser(user: PublicUser): PublicUser {
-    const rawVerified = user.emailVerified ?? true;
+    const rawVerified = user.emailVerified ?? false;
     return {
       id: user.id,
       name: user.name,
@@ -181,10 +222,7 @@ export class AuthService {
 
     const passwordHash = await bcrypt.hash(dto.password, 12);
     const assignOnRegister = this.shouldAssignGroupOnRegister();
-    const shouldRequireOtp =
-      process.env.NODE_ENV !== 'production' ||
-      this.emailSender.isSmtpConfigured() ||
-      process.env.FORCE_EMAIL_OTP === 'true';
+    const shouldRequireOtp = this.shouldRequireEmailOtp();
     const otpCode = this.generateOtpCode();
     const now = new Date();
     const expiresAt = new Date(now.getTime() + OTP_TTL_MS);
@@ -225,8 +263,9 @@ export class AuthService {
         },
       );
 
+      let verificationDelivery: 'SENT' | 'FAILED' = 'SENT';
       if (shouldRequireOtp) {
-        await this.emailSender.sendVerificationOtp({
+        verificationDelivery = await this.deliverOtp({
           to: user.email,
           name: user.name,
           code: otpCode,
@@ -236,7 +275,7 @@ export class AuthService {
 
       const publicUser = this.toPublicUser(user);
       const tokens = await this.issueTokens(publicUser);
-      return { user: publicUser, tokens };
+      return { user: { ...publicUser, verificationDelivery }, tokens };
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -271,6 +310,7 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password');
     }
 
+    let verificationDelivery: 'SENT' | 'FAILED' | undefined;
     if (!user.emailVerified) {
       const now = new Date();
       const cooldownElapsed =
@@ -292,7 +332,7 @@ export class AuthService {
             emailVerificationAttempts: 0,
           },
         });
-        await this.emailSender.sendVerificationOtp({
+        verificationDelivery = await this.deliverOtp({
           to: user.email,
           name: user.name,
           code: otpCode,
@@ -302,7 +342,10 @@ export class AuthService {
     }
 
     const publicUser = this.toPublicUser(user);
-    return { user: publicUser, tokens: await this.issueTokens(publicUser) };
+    return {
+      user: { ...publicUser, verificationDelivery },
+      tokens: await this.issueTokens(publicUser),
+    };
   }
 
   async verifyEmail(userId: string, code: string): Promise<PublicUser> {

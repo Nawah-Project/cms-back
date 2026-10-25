@@ -70,26 +70,26 @@ export class EmailSenderService {
     const pass = process.env.SMTP_PASS?.trim() || undefined;
     const from =
       process.env.SMTP_FROM?.trim() ||
-      (user ? `Nawah Platform <${user}>` : 'Nawah Platform <no-reply@nawah.local>');
+      (user
+        ? `Nawah Platform <${user}>`
+        : 'Nawah Platform <no-reply@nawah.local>');
 
     return { host, port, secure, user, pass, from };
   }
 
   async sendVerificationOtp(params: SendVerificationOtpParams): Promise<void> {
     const { to, name, code, expiresInMinutes = 15 } = params;
-    this.lastSentOtpForTest = { to, code };
+    if (process.env.NODE_ENV === 'test') this.lastSentOtpForTest = { to, code };
 
     const smtpConfig = this.getSmtpConfig();
     if (!smtpConfig) {
-      if (process.env.NODE_ENV !== 'test') {
-        this.logger.log(
-          `[DEV EMAIL] Verification OTP for ${to} (${name}): ${code} (valid for ${expiresInMinutes}m)`,
-        );
-      }
-      return;
+      if (process.env.NODE_ENV === 'test') return;
+      throw new BadRequestException(
+        'Email delivery is unavailable. Request a new verification code later.',
+      );
     }
 
-    const subject = `كود تفعيل حسابك في منصة نواة: ${code} | Nawah Verification Code`;
+    const subject = 'تفعيل حساب نواة | Nawah Verification';
     const textBody = [
       `مرحباً ${name}،`,
       ``,
@@ -149,15 +149,10 @@ export class EmailSenderService {
       deliveryError = error instanceof Error ? error.message : String(error);
       this.logger.error(
         `Failed to send verification OTP email to ${to} via SMTP (${smtpConfig.host}:${smtpConfig.port})`,
-        error instanceof Error ? error.stack : String(error),
       );
-      if (process.env.NODE_ENV !== 'production') {
-        this.logger.warn(
-          `[FALLBACK DEV OTP] Verification code for ${to}: ${code}`,
-        );
-      } else {
-        throw error;
-      }
+      throw new BadRequestException(
+        'Verification email delivery failed. Please retry later.',
+      );
     } finally {
       if (this.prisma?.emailDeliveryLog) {
         try {
@@ -166,13 +161,16 @@ export class EmailSenderService {
               recipientEmail: to,
               recipientName: name,
               subject,
-              bodyText: textBody,
-              bodyHtml: htmlBody,
+              bodyText: '[Verification content redacted]',
+              bodyHtml: null,
               type: EmailType.VERIFICATION_OTP,
               channel: 'EMAIL',
               status: deliveryStatus,
-              errorMessage: deliveryError,
-              sentAt: deliveryStatus === EmailDeliveryStatus.DELIVERED ? new Date() : null,
+              errorMessage: deliveryError ? 'SMTP delivery failed' : null,
+              sentAt:
+                deliveryStatus === EmailDeliveryStatus.DELIVERED
+                  ? new Date()
+                  : null,
             },
           });
         } catch {
@@ -247,7 +245,9 @@ export class EmailSenderService {
     let errorMessage: string | null = null;
 
     if (!smtpConfig) {
-      this.logger.warn(`[SMTP NOT CONFIGURED] Simulated email send to ${to}: ${subject}`);
+      this.logger.warn(
+        `[SMTP NOT CONFIGURED] Simulated email send to ${to}: ${subject}`,
+      );
       status = EmailDeliveryStatus.DELIVERED;
     } else {
       try {
@@ -279,7 +279,8 @@ export class EmailSenderService {
             channel,
             status,
             errorMessage,
-            sentAt: status === EmailDeliveryStatus.DELIVERED ? new Date() : null,
+            sentAt:
+              status === EmailDeliveryStatus.DELIVERED ? new Date() : null,
           },
         });
       } catch (logErr) {
@@ -288,7 +289,9 @@ export class EmailSenderService {
     }
 
     if (status === EmailDeliveryStatus.FAILED) {
-      throw new BadRequestException(`فشل إرسال البريد إلى ${to}: ${errorMessage}`);
+      throw new BadRequestException(
+        `فشل إرسال البريد إلى ${to}: ${errorMessage}`,
+      );
     }
 
     return { success: true };
@@ -479,4 +482,3 @@ export class EmailSenderService {
     }
   }
 }
-

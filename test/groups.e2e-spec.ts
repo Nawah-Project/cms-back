@@ -14,7 +14,9 @@ describe('Automatic group assignment (PostgreSQL e2e)', () => {
   let prisma: PrismaService;
   let assignment: GroupAssignmentService;
 
+  const previousAssignment=process.env.ASSIGN_GROUP_ON_REGISTER;
   beforeAll(async () => {
+    process.env.ASSIGN_GROUP_ON_REGISTER='true';
     const module = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -34,7 +36,7 @@ describe('Automatic group assignment (PostgreSQL e2e)', () => {
     assignment = app.get(GroupAssignmentService);
   });
 
-  afterAll(async () => app?.close());
+  afterAll(async () => { if(previousAssignment===undefined)delete process.env.ASSIGN_GROUP_ON_REGISTER;else process.env.ASSIGN_GROUP_ON_REGISTER=previousAssignment;await app?.close(); });
 
   const registration = (number: number) =>
     request(server)
@@ -138,7 +140,7 @@ describe('Automatic group assignment (PostgreSQL e2e)', () => {
     ).rejects.toThrow();
   }, 30000);
 
-  it('backfills unassigned users while keeping existing memberships unchanged', async () => {
+  it('explicitly assigns an unassigned legacy member while keeping existing memberships unchanged', async () => {
     const existing = await prisma.membership.findUniqueOrThrow({
       where: {
         userId: (
@@ -155,7 +157,7 @@ describe('Automatic group assignment (PostgreSQL e2e)', () => {
         passwordHash: 'already-hashed',
       },
     });
-    await assignment.onApplicationBootstrap();
+    await assignment.assignUserToGroup(legacyUser.id);
     expect(
       await prisma.membership.findUnique({
         where: { userId: existing.userId },

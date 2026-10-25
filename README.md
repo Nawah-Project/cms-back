@@ -98,3 +98,31 @@ New accounts receive the `USER` role. After applying migrations, grant administr
 Credentialed CORS uses the comma-separated `FRONTEND_ORIGIN` allowlist (for example `http://localhost:5173,http://localhost:5174`). Restart the backend after changing it. Production requires distinct random `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` values.
 
 CV files are stored outside public/static serving under `private-storage/cvs` by default. Set `CV_STORAGE_DIR` to a private persistent volume in production. `CV_MAX_FILE_SIZE_BYTES` configures the PDF upload limit (5 MiB default, capped at 25 MiB). PostgreSQL stores only the CV metadata and private storage key.
+
+### Stabilization verification (Phase 2)
+
+Use Node **24.9+** (the tested cached image runs 24.21.0). `npm test` and
+`npm run test:e2e` enable Node VM modules so Jest loads the real ESM dependencies;
+only TypeScript source is transformed. No sanitizer mock is used in the sanitizer
+regression test. E2E fixtures use a disposable `cms_test` database and suppress
+scheduled no-response startup work; the processor has separate tests.
+
+With migrations applied **only to that disposable database**:
+
+```bash
+npm run prisma:generate
+npm run build
+npx tsc --noEmit --incremental false
+npm test -- --runInBand
+npm run test:e2e
+node --test test/stabilization.stage-a.cjs test/stabilization.stage-b.cjs
+node --test test/stabilization.stage-c.cjs
+```
+
+`TEST_DATABASE_URL` is mandatory; the native integration tests refuse other DB
+names and `NODE_ENV` values. The Phase 1 integration config additionally requires
+a fresh empty schema. See `docs/NAWAH_PHASE_2_MANUAL_QA.md` for browser checks.
+Registration now always requires email verification: verify SMTP delivery in the
+intended deployment before admitting pilot members. SMTP failure retains the
+pending authenticated account and supports fresh-code resend; it never marks the
+email verified automatically. Test mode alone captures synthetic OTPs in memory.

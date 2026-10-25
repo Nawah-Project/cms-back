@@ -11,6 +11,7 @@ import { AuthService } from '../src/auth/auth.service';
 import { EmailSenderService } from '../src/auth/email-sender.service';
 import { SocialAuthService } from '../src/auth/social-auth.service';
 import { AccountLinkRequiredError } from '../src/auth/social-auth.errors';
+import { prepareProgramMember } from './program-fixture';
 import { resetTestDatabase } from './reset-test-database';
 
 describe('Authentication and application ownership (e2e)', () => {
@@ -250,6 +251,8 @@ describe('Authentication and application ownership (e2e)', () => {
         password: 'SecurePass123!',
       })
       .expect(201);
+    const owner=await app.get(PrismaService).user.findUniqueOrThrow({where:{email:'owner-one@example.com'}});
+    await prepareProgramMember(app.get(PrismaService),owner.id);
     const created = await first
       .post('/applications')
       .send({ companyName: 'Private Co', jobTitle: 'Engineer' })
@@ -264,6 +267,8 @@ describe('Authentication and application ownership (e2e)', () => {
         password: 'SecurePass123!',
       })
       .expect(201);
+    const other=await app.get(PrismaService).user.findUniqueOrThrow({where:{email:'owner-two@example.com'}});
+    await prepareProgramMember(app.get(PrismaService),other.id);
     await second.get(`/applications/${created.body.id}`).expect(404);
     await second
       .patch(`/applications/${created.body.id}`)
@@ -274,7 +279,7 @@ describe('Authentication and application ownership (e2e)', () => {
     expect(list.body.total).toBe(0);
   });
 
-  it('creates one internal user, identity, and group membership for a new social identity', async () => {
+  it('creates one internal user and identity, deferring membership until activation', async () => {
     const auth = app.get(AuthService);
     const prisma = app.get(PrismaService);
     const firstLogin = await auth.signInWithProvider({
@@ -308,7 +313,7 @@ describe('Authentication and application ownership (e2e)', () => {
       email: 'social@example.com',
       passwordHash: null,
     });
-    expect(stored?.membership?.groupId).toBeTruthy();
+    expect(stored?.membership).toBeNull();
   });
 
   it('does not silently link a Google identity to an existing email/password account', async () => {

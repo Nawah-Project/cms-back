@@ -7,6 +7,7 @@ import { ApplicationStage } from '../src/applications/enums/application-stage.en
 import { ApplicationOutcome } from '../src/applications/enums/application-outcome.enum';
 import { ApplicationMethod } from '../src/applications/enums/application-method.enum';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { prepareProgramMember } from './program-fixture';
 import { resetTestDatabase } from './reset-test-database';
 
 describe('Applications (e2e)', () => {
@@ -39,7 +40,7 @@ describe('Applications (e2e)', () => {
       'user-stranger',
     ]) {
       const agent = request.agent(app.getHttpServer());
-      await agent
+      const account = await agent
         .post('/auth/register')
         .send({
           name: id,
@@ -47,6 +48,7 @@ describe('Applications (e2e)', () => {
           password: 'SecurePass123!',
         })
         .expect(201);
+      await prepareProgramMember(moduleFixture.get(PrismaService), account.body.id as string);
       agents.set(id, agent);
     }
   });

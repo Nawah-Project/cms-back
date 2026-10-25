@@ -5,6 +5,7 @@ import request from 'supertest';
 import { UserRole } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { prepareProgramMember } from './program-fixture';
 import { resetTestDatabase } from './reset-test-database';
 
 describe('Professional development tasks (e2e)', () => {
@@ -45,6 +46,7 @@ describe('Professional development tasks (e2e)', () => {
           password: 'SecurePass123!',
         })
         .expect(201);
+      await prepareProgramMember(prisma, response.body.id as string, 3);
       return { agent, id: response.body.id as string };
     }
     const adminAccount = await register('task-admin');

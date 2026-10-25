@@ -1,11 +1,17 @@
 {
-  "moduleFileExtensions": ["js", "json", "ts"],
+  "moduleFileExtensions": [
+    "js",
+    "json",
+    "ts"
+  ],
   "rootDir": ".",
-  "setupFiles": ["<rootDir>/load-env.ts"],
+  "setupFiles": [
+    "<rootDir>/load-env.ts"
+  ],
   "testEnvironment": "node",
   "testRegex": ".e2e-spec.ts$",
   "transform": {
-    "^.+\\.(t|j)s$": [
+    "^.+\\.ts$": [
       "ts-jest",
       {
         "tsconfig": {
@@ -15,6 +21,9 @@
     ]
   },
   "transformIgnorePatterns": [
-    "node_modules/(?!(@nestjs/event-emitter)/)"
+    "node_modules/"
+  ],
+  "setupFilesAfterEnv": [
+    "<rootDir>/setup-processors.ts"
   ]
 }

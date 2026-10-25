@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { FeedbackContext, FeedbackVisibility, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { EmailSenderService } from '../auth/email-sender.service';
 import { FeedbackService } from './feedback.service';
 
 jest.mock('./content-sanitizer', () => ({
@@ -15,6 +16,7 @@ jest.mock('./content-sanitizer', () => ({
 
 describe('FeedbackService', () => {
   const prisma = {
+    userJourneyState: {findUnique:jest.fn().mockResolvedValue({unlockedInsightCodes:[],currentWeek:3})},
     user: { findFirst: jest.fn(), findUnique: jest.fn() },
     group: { findUnique: jest.fn() },
     feedbackPost: {
@@ -30,13 +32,14 @@ describe('FeedbackService', () => {
         : (queries as () => unknown)(),
     ),
   };
-  const service = new FeedbackService(prisma as unknown as PrismaService);
+  const service = new FeedbackService(prisma as unknown as PrismaService, {} as EmailSenderService);
   const memberId = '04d53dae-17b7-4d85-96e2-45bf74b43d6e';
   const postId = 'a61fc733-dd16-48fc-9531-30d4bd499974';
 
   beforeEach(() => {
     jest.clearAllMocks();
     prisma.user.findFirst.mockResolvedValue({ id: memberId });
+    prisma.user.findUnique.mockResolvedValue({id:memberId,role:UserRole.USER});
     prisma.feedbackPost.findMany.mockResolvedValue([]);
     prisma.feedbackPost.count.mockResolvedValue(0);
   });
@@ -125,6 +128,7 @@ describe('FeedbackService', () => {
 
   it('rejects invalid audience combinations and missing audiences', async () => {
     prisma.user.findFirst.mockResolvedValue({ id: memberId });
+    prisma.user.findUnique.mockResolvedValue({id:memberId,role:UserRole.USER});
     await expect(
       service.create(memberId, {
         title: 'Private',

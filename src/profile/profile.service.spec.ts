@@ -49,12 +49,15 @@ describe('ProfileService', () => {
   beforeEach(async () => {
     storageDir = await mkdtemp(join(tmpdir(), 'cms-profile-cv-'));
     transaction = {
+      userJourneyState: { findUnique: jest.fn().mockResolvedValue({cvVersionNumber:1}), update: jest.fn() },
+      userCvHistory: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn() },
       userCv: {
         findUnique: jest.fn().mockResolvedValue(null),
         upsert: jest.fn().mockResolvedValue(cvRecord()),
       },
     };
     prisma = {
+      userCvHistory: { findMany: jest.fn().mockResolvedValue([]) },
       user: {
         findUnique: jest.fn(),
         update: jest.fn().mockResolvedValue({ id: CURRENT_USER }),
@@ -79,6 +82,7 @@ describe('ProfileService', () => {
       id: CURRENT_USER,
       name: 'Hussein',
       portfolioUrl: 'https://portfolio.example',
+      targetJobTitle: 'Designer',
       cv: cvRecord(),
     });
 
@@ -151,7 +155,7 @@ describe('ProfileService', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
-  it('replaces the old file only after the new file and metadata are stored', async () => {
+  it('preserves the previous file as history after storing a new version', async () => {
     transaction.userCv.findUnique.mockResolvedValue({ storageKey: OLD_KEY });
     transaction.userCv.upsert.mockResolvedValue(cvRecord(NEW_KEY));
     await writeFile(join(storageDir, OLD_KEY), '%PDF-old');
@@ -163,9 +167,7 @@ describe('ProfileService', () => {
     expect(await readFile(join(storageDir, newStorageKey), 'utf8')).toContain(
       '%PDF-',
     );
-    await expect(readFile(join(storageDir, OLD_KEY))).rejects.toMatchObject({
-      code: 'ENOENT',
-    });
+    expect(await readFile(join(storageDir, OLD_KEY), 'utf8')).toBe('%PDF-old');
   });
 
   it('removes the newly written file if metadata persistence fails', async () => {

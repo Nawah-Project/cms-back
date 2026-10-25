@@ -6,6 +6,7 @@ import request from 'supertest';
 import { UserRole } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { prepareProgramMember } from './program-fixture';
 import { resetTestDatabase } from './reset-test-database';
 
 describe('Admin group management and monitoring (PostgreSQL e2e)', () => {
@@ -13,7 +14,9 @@ describe('Admin group management and monitoring (PostgreSQL e2e)', () => {
   let server: ReturnType<NestExpressApplication['getHttpServer']>;
   let prisma: PrismaService;
 
+  const previousAssignment=process.env.ASSIGN_GROUP_ON_REGISTER;
   beforeAll(async () => {
+    process.env.ASSIGN_GROUP_ON_REGISTER='true';
     const module = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -32,7 +35,7 @@ describe('Admin group management and monitoring (PostgreSQL e2e)', () => {
     server = app.getHttpServer();
   });
 
-  afterAll(async () => app?.close());
+  afterAll(async () => { if(previousAssignment===undefined)delete process.env.ASSIGN_GROUP_ON_REGISTER;else process.env.ASSIGN_GROUP_ON_REGISTER=previousAssignment;await app?.close(); });
 
   async function register(key: string) {
     const agent = request.agent(server);
@@ -44,6 +47,7 @@ describe('Admin group management and monitoring (PostgreSQL e2e)', () => {
         password: 'SecurePass123!',
       })
       .expect(201);
+    await prepareProgramMember(prisma, response.body.id as string);
     return { agent, userId: response.body.id as string };
   }
 
@@ -204,7 +208,7 @@ describe('Admin group management and monitoring (PostgreSQL e2e)', () => {
       groupsMonitoring.body.items.find(
         (group: { id: string }) => group.id === firstGroup.id,
       ),
-    ).toMatchObject({ capacity: 10, availableSlots: 0, memberCount: 10 });
+    ).toMatchObject({ capacity: 10, availableSlots: 1, memberCount: 9 });
     expect(
       groupsMonitoring.body.items.find(
         (group: { id: string }) => group.id === secondGroup.id,
@@ -217,7 +221,7 @@ describe('Admin group management and monitoring (PostgreSQL e2e)', () => {
     });
     expect(
       (await admin.agent.get('/admin/monitoring/overview').expect(200)).body,
-    ).toMatchObject({ usersCount: 14, groupsCount: 2, applicationsCount: 3 });
+    ).toMatchObject({ usersCount: 13, groupsCount: 2, applicationsCount: 3 });
     expect(
       (await admin.agent.get('/admin/monitoring/activity?limit=5').expect(200))
         .body.items.length,

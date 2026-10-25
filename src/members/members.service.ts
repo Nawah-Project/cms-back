@@ -420,7 +420,10 @@ export class MembersService {
         };
       }),
     ];
-    return feed
+    // Peer progress remains visible; opportunity details require explicit sharing.
+    return feed.map(item => item.memberId === currentUserId || item.sharedWithGroup ? item : {
+      ...item, application: { ...item.application, companyName: '', jobTitle: '', jobUrl: null, applicationMethod: null },
+    })
       .sort(
         (a, b) =>
           b.changedAt.localeCompare(a.changedAt) || b.id.localeCompare(a.id),
@@ -457,6 +460,7 @@ export class MembersService {
           select: {
             id: true,
             companyName: true,
+            sharedWithGroup: true,
             jobTitle: true,
             applicationDate: true,
             location: true,
@@ -483,6 +487,7 @@ export class MembersService {
     const companies = [
       ...new Set(
         applications
+          .filter(application=>application.sharedWithGroup)
           .map((application) => application.companyName.trim().toLowerCase())
           .filter(Boolean),
       ),
@@ -493,6 +498,7 @@ export class MembersService {
         ? await this.prisma.application.findMany({
             where: {
               userId: { in: otherUserIds },
+              sharedWithGroup: true,
               OR: companies.map((name) => ({
                 companyName: { equals: name.trim(), mode: 'insensitive' },
               })),
@@ -536,6 +542,7 @@ export class MembersService {
         const otherMembers = sharedCompanyByName.get(key) ?? [];
         return {
           ...application,
+          ...(targetMemberId !== currentUserId && !application.sharedWithGroup ? { companyName: '', jobTitle: '', jobUrl: null, location: null, applicationMethod: null } : {}),
           outcome:
             application.outcome === ApplicationOutcome.NONE
               ? null

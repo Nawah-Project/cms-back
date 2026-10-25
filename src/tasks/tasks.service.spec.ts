@@ -35,7 +35,7 @@ describe('TasksService', () => {
         updateMany: jest.fn(),
         count: jest.fn().mockResolvedValue(0),
       },
-      user: { findUnique: jest.fn().mockResolvedValue({ id: 'member-1' }) },
+      user: { findUnique: jest.fn().mockResolvedValue({ id: 'member-1', role: 'USER', journeyState: {currentWeek:3, readInsightCodes:['INSIGHT_W3_TIME_MGMT']} }) },
       $transaction: jest.fn(async (input: any) =>
         Array.isArray(input) ? Promise.all(input) : input(prisma),
       ),

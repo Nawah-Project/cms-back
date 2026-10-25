@@ -9,6 +9,7 @@ describe('MembersService', () => {
 
   beforeEach(() => {
     prisma = {
+      userJourneyState: {findUnique: jest.fn().mockResolvedValue({currentWeek:1,completedNodeCodes:['TASK_0']})},
       membership: {
         findUnique: jest.fn().mockResolvedValue({ groupId: 'group-a' }),
         findMany: jest.fn().mockResolvedValue([
@@ -167,6 +168,7 @@ describe('MembersService', () => {
         {
           id: 'app-a',
           companyName: 'Same Co',
+          sharedWithGroup: true,
           jobTitle: 'Designer',
           applicationDate: '2026-01-01',
           location: null,
@@ -197,6 +199,7 @@ describe('MembersService', () => {
       expect.objectContaining({
         where: {
           userId: { in: ['member-b'] },
+          sharedWithGroup: true,
           OR: [{ companyName: { equals: 'same co', mode: 'insensitive' } }],
         },
       }),
@@ -221,6 +224,7 @@ describe('MembersService', () => {
         {
           id: 'app-a',
           companyName: 'Vodafone',
+          sharedWithGroup: true,
           jobTitle: 'Designer',
           applicationDate: '2026-01-01',
           location: null,
@@ -246,7 +250,7 @@ describe('MembersService', () => {
     await expect(
       service.getMemberDetail('member-a', 'outside-member'),
     ).rejects.toThrow(NotFoundException);
-    expect(prisma.user.findUnique).not.toHaveBeenCalled();
+    expect(prisma.user.findUnique).not.toHaveBeenCalledWith(expect.objectContaining({where:{id:'outside-member'}}));
   });
 
   it('rejects users who do not belong to a group', async () => {

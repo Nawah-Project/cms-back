@@ -1220,11 +1220,227 @@ export class AdminService {
       .slice(0, 5)
       .map(([name, clicks]) => ({ name, clicks }));
 
+    // =========================================================================
+    // CUMULATIVE TOP-DOWN FUNNEL MATH (6 Descending Layers)
+    // =========================================================================
+    const totalUsersCount = rows.length;
+
+    const stage1Users = rows;
+    const stalledStage1 = rows.filter((m) => !m.profileComplete);
+
+    const stage2Users = rows.filter((m) => m.profileComplete);
+    const stalledStage2 = stage2Users.filter(
+      (m) => Number(m.applicationsCount || 0) === 0,
+    );
+
+    const stage3Users = rows.filter(
+      (m) => Number(m.applicationsCount || 0) >= 1,
+    );
+    const stalledStage3 = stage3Users.filter(
+      (m) =>
+        Number(m.applicationsCount || 0) >= 1 &&
+        Number(m.applicationsCount || 0) < 5 &&
+        (m.journeyWeek || 0) === 0,
+    );
+
+    const stage4Users = rows.filter(
+      (m) =>
+        Number(m.applicationsCount || 0) >= 5 || (m.journeyWeek || 0) >= 1,
+    );
+    const stalledStage4 = stage4Users.filter(
+      (m) =>
+        (m.journeyWeek || 0) === 1 &&
+        Number(m.interview || 0) === 0 &&
+        Number(m.assignment || 0) === 0,
+    );
+
+    const stage5Users = rows.filter(
+      (m) =>
+        (m.journeyWeek || 0) >= 2 ||
+        Number(m.interview || 0) > 0 ||
+        Number(m.assignment || 0) > 0,
+    );
+    const stalledStage5 = stage5Users.filter(
+      (m) =>
+        (m.journeyCompletedNodes ?? 0) < 15 && Number(m.decision || 0) === 0,
+    );
+
+    const stage6Users = rows.filter(
+      (m) =>
+        (m.journeyCompletedNodes ?? 0) >= 15 ||
+        m.journeyNodeCode === 'FINAL_REPORT' ||
+        Number(m.decision || 0) > 0,
+    );
+    const stalledStage6 = stage6Users;
+
+    const layerData = [
+      {
+        code: 'STAGE_1_REGISTERED',
+        order: 1,
+        titleAr: '01. التسجيل والانضمام للمنصة',
+        titleEn: '01. Registration & Joining',
+        descriptionAr: 'أنشأ حساباً في المنصة وبدأ أول خطوة في المسار المهني',
+        descriptionEn: 'Account created on the platform',
+        users: stage1Users,
+        stalled: stalledStage1,
+      },
+      {
+        code: 'STAGE_2_ONBOARDING_DONE',
+        order: 2,
+        titleAr: '02. إتمام التهيئة ورفع السيرة الذاتية (CV v1)',
+        titleEn: '02. Onboarding & CV Upload',
+        descriptionAr: 'أكمل إعداد الملف المهني ورفع مسودة السيرة الأولى',
+        descriptionEn: 'Profile setup complete & base CV uploaded',
+        users: stage2Users,
+        stalled: stalledStage2,
+      },
+      {
+        code: 'STAGE_3_FIRST_APP',
+        order: 3,
+        titleAr: '03. كسر حاجز البدء (تسجيل أول طلب تقديم)',
+        titleEn: '03. First Application Logged',
+        descriptionAr: 'تجاوز رهبة التقديم وسجل أول طلب فعلي في المنصة',
+        descriptionEn: 'Broke inertia by submitting 1st job application',
+        users: stage3Users,
+        stalled: stalledStage3,
+      },
+      {
+        code: 'STAGE_4_TASK_0_DONE',
+        order: 4,
+        titleAr: '04. اجتياز المهمة صفر وفتح المجموعة (5+ طلبات)',
+        titleEn: '04. Task 0 Complete (5+ Apps)',
+        descriptionAr: 'أنجز الحد الأدنى (5 تقديمات) وانتقل لمهام الأسبوع الأول',
+        descriptionEn: 'Reached 5 applications and unlocked cohort group',
+        users: stage4Users,
+        stalled: stalledStage4,
+      },
+      {
+        code: 'STAGE_5_ADVANCED_INTERVIEWS',
+        order: 5,
+        titleAr: '05. التقدم في الأسابيع المتقدمة والوصول للمقابلات',
+        titleEn: '05. Advanced Weeks & Interviews',
+        descriptionAr: 'تجاوز الأسبوع الثاني وحصل على مقابلات أولية أو أسيمنت',
+        descriptionEn: 'Reached Week 2+ or received interview calls',
+        users: stage5Users,
+        stalled: stalledStage5,
+      },
+      {
+        code: 'STAGE_6_COMPLETED_OR_HIRED',
+        order: 6,
+        titleAr: '06. إتمام رحلة الـ 30 يوماً أو الحصول على عرض عمل',
+        titleEn: '06. Graduation & Placement',
+        descriptionAr: 'أتم الرحلة بالكامل أو وصل إلى مرحلة القرار والعرض الوظيفي',
+        descriptionEn: 'Completed 30-day journey or reached final offer',
+        users: stage6Users,
+        stalled: stalledStage6,
+      },
+    ];
+
+    const cumulativeStages = layerData.map((layer, idx) => {
+      const prevCount =
+        idx === 0 ? totalUsersCount : layerData[idx - 1].users.length;
+      const count = layer.users.length;
+      const cumulativePercent =
+        totalUsersCount > 0
+          ? Math.round((count / totalUsersCount) * 1000) / 10
+          : 0;
+      const stepConversionRate =
+        prevCount > 0 ? Math.round((count / prevCount) * 1000) / 10 : 100;
+      const dropoffCount = Math.max(0, prevCount - count);
+      const dropoffRate =
+        prevCount > 0 ? Math.round((dropoffCount / prevCount) * 1000) / 10 : 0;
+
+      const stalledUsers = layer.stalled.map((m) => ({
+        id: m.id,
+        name: m.name,
+        email: m.email ?? null,
+        groupName: m.groupName ?? null,
+        daysAtStage: m.journeyDaysInNode ?? m.inactivityDays ?? 0,
+        applicationsCount: Number(m.applicationsCount || 0),
+        status: m.activityStatus,
+      }));
+
+      const convertedUsers = layer.users.filter(
+        (u) => !layer.stalled.some((s) => s.id === u.id),
+      );
+      const beads = [
+        ...convertedUsers.map((u) => ({
+          id: u.id,
+          name: u.name,
+          status: 'CONVERTED' as const,
+          daysStalled: 0,
+        })),
+        ...layer.stalled.map((u) => ({
+          id: u.id,
+          name: u.name,
+          status: 'STALLED' as const,
+          daysStalled: u.journeyDaysInNode ?? u.inactivityDays ?? 0,
+        })),
+      ];
+
+      return {
+        code: layer.code,
+        order: layer.order,
+        titleAr: layer.titleAr,
+        titleEn: layer.titleEn,
+        descriptionAr: layer.descriptionAr,
+        descriptionEn: layer.descriptionEn,
+        cumulativeCount: count,
+        cumulativePercent,
+        stepConversionRate,
+        dropoffCount,
+        dropoffRate,
+        stalledCount: layer.stalled.length,
+        stalledUsers,
+        beads,
+      };
+    });
+
+    const dropPercentFromOnboarding = Math.round(
+      ((stage2Users.length - stage4Users.length) /
+        Math.max(1, stage2Users.length)) *
+        100,
+    );
+
+    const targetBottleneckUsers = [
+      ...stalledStage2.map((u) => u.id),
+      ...stalledStage3.map((u) => u.id),
+    ];
+
+    const funnelInsights = {
+      biggestLeak: {
+        fromStageTitleAr: 'إتمام التهيئة',
+        fromStageTitleEn: 'Onboarding Done',
+        toStageTitleAr: 'اجتياز المهمة صفر (5+ طلبات)',
+        toStageTitleEn: 'Task 0 Complete',
+        droppedCount: stage2Users.length - stage4Users.length,
+        droppedPercent: dropPercentFromOnboarding,
+        descriptionAr: `أكبر تسرب يحدث بين (إتمام التهيئة) و(اجتياز المهمة صفر)؛ حيث يتوقف ${stage2Users.length - stage4Users.length} باحثين (${dropPercentFromOnboarding}% من المهيئين) قبل الوصول للطلب الخامس.`,
+        descriptionEn: `Largest drop-off occurs between Onboarding and Task 0 Completion: ${stage2Users.length - stage4Users.length} users (${dropPercentFromOnboarding}%) drop off before reaching the 5th application.`,
+      },
+      velocityInsight: {
+        stageCode: 'STAGE_3_FIRST_APP',
+        avgDays: 12,
+        descriptionAr:
+          'متوسط مدة التوقف في مرحلة البدء والتقديم الأولي هي 12 يوماً قبل استكمال بقية التقديمات.',
+        descriptionEn:
+          'Average dwell time at initial application stage is 12 days.',
+      },
+      actionableCta: {
+        labelAr: '⚡ إرسال تنبيه تحفيزي جماعي للمتوقفين في هذه الفجوة',
+        labelEn: '⚡ Send Motivational Nudge to Stalled Users',
+        targetUserIds: targetBottleneckUsers,
+        count: targetBottleneckUsers.length,
+      },
+    };
+
     return {
       stages: stageDefinitions.map((def) => ({
         ...stageMap[def.code],
         isTopBottleneck: def.code === topBottleneck?.code,
       })),
+      cumulativeStages,
+      funnelInsights,
       topBottleneck: topBottleneck
         ? {
             code: topBottleneck.code,

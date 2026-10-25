@@ -98,8 +98,18 @@ export class AdminController {
     return this.admin.getUxLabOverview();
   }
 
+  @Get('monitoring/ux-lab-overview')
+  getUxLabOverviewAlias() {
+    return this.admin.getUxLabOverview();
+  }
+
   @Patch('ux-lab/variants/assign')
   assignUxVariants(@Body() dto: AssignUxVariantDto) {
+    return this.admin.assignUxVariants(dto);
+  }
+
+  @Patch('monitoring/ux-variants/assign')
+  assignUxVariantsAlias(@Body() dto: AssignUxVariantDto) {
     return this.admin.assignUxVariants(dto);
   }
 

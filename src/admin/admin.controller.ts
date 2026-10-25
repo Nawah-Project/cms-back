@@ -18,12 +18,18 @@ import {
   MonitoringActivityQueryDto,
   MonitoringQueryDto,
 } from './dto/monitoring-query.dto';
+import { CreateGroupDto } from './dto/create-group.dto';
 import { UpdateUxConfigDto } from './dto/track-ux-event.dto';
 
 @Controller('admin')
 @UseGuards(JwtAuthGuard, AdminGuard)
 export class AdminController {
   constructor(private readonly admin: AdminService) {}
+
+  @Post('groups')
+  createGroup(@Body() dto: CreateGroupDto) {
+    return this.admin.createGroup(dto.name);
+  }
 
   @Delete('groups/:groupId/members/:userId')
   removeMember(

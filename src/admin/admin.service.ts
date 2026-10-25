@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   Logger,
@@ -483,6 +484,28 @@ export class AdminService {
         availableSlots: Math.max(0, MAX_GROUP_SIZE - group.memberCount),
         lastActivityAt: group.lastActivityAt?.toISOString() ?? null,
       })),
+    };
+  }
+
+  async createGroup(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      throw new BadRequestException('Group name is required');
+    }
+    const group = await this.prisma.group.create({
+      data: { name: trimmed },
+    });
+    return {
+      id: group.id,
+      name: group.name,
+      memberCount: 0,
+      capacity: MAX_GROUP_SIZE,
+      availableSlots: MAX_GROUP_SIZE,
+      lastActivityAt: null,
+      activeMembers: 0,
+      warningMembers: 0,
+      criticalMembers: 0,
+      neverActiveMembers: 0,
     };
   }
 

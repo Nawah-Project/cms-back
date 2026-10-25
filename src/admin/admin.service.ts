@@ -1222,54 +1222,66 @@ export class AdminService {
 
     // =========================================================================
     // CUMULATIVE TOP-DOWN FUNNEL MATH (6 Descending Layers)
+    // Strict Top-Down: Nobody enters a layer without completing the previous ones
     // =========================================================================
     const totalUsersCount = rows.length;
 
+    // 1. STAGE 1 (Registration & Joining - 100% of non-admin researchers)
+    //    Stalled: Did not complete onboarding profile
     const stage1Users = rows;
     const stalledStage1 = rows.filter((m) => !m.profileComplete);
 
-    const stage2Users = rows.filter((m) => m.profileComplete);
+    // 2. STAGE 2 (Onboarding Complete & CV Uploaded)
+    //    Stalled: Profile complete but 0 applications logged
+    const stage2Users = rows.filter(
+      (m) => m.profileComplete || Number(m.applicationsCount || 0) >= 1,
+    );
     const stalledStage2 = stage2Users.filter(
       (m) => Number(m.applicationsCount || 0) === 0,
     );
 
-    const stage3Users = rows.filter(
-      (m) => Number(m.applicationsCount || 0) >= 1,
+    // 3. STAGE 3 (Breaking Inertia - 1st Application Logged)
+    //    Stalled: 1 to 4 applications and still in Week 0 (includes T3lm)
+    const stage3Users = stage2Users.filter(
+      (m) =>
+        Number(m.applicationsCount || 0) >= 1 ||
+        (m.journeyWeek !== null && m.journeyWeek !== undefined && m.journeyWeek >= 1),
     );
     const stalledStage3 = stage3Users.filter(
       (m) =>
         Number(m.applicationsCount || 0) >= 1 &&
         Number(m.applicationsCount || 0) < 5 &&
-        (m.journeyWeek || 0) === 0,
+        (m.journeyWeek === null || m.journeyWeek === undefined || m.journeyWeek === 0),
     );
 
-    const stage4Users = rows.filter(
+    // 4. STAGE 4 (Task 0 Complete & Week 1 Launch)
+    //    Stalled / Active in Week 1: In Week 1 milestones
+    const stage4Users = stage3Users.filter(
       (m) =>
-        Number(m.applicationsCount || 0) >= 5 || (m.journeyWeek || 0) >= 1,
+        (m.journeyWeek !== null && m.journeyWeek !== undefined && m.journeyWeek >= 1) ||
+        (m.journeyCompletedNodes !== null && m.journeyCompletedNodes !== undefined && m.journeyCompletedNodes >= 1) ||
+        Number(m.applicationsCount || 0) >= 5,
     );
     const stalledStage4 = stage4Users.filter(
       (m) =>
-        (m.journeyWeek || 0) === 1 &&
-        Number(m.interview || 0) === 0 &&
-        Number(m.assignment || 0) === 0,
+        (m.journeyWeek === 1 || (Number(m.applicationsCount || 0) >= 5 && (m.journeyWeek ?? 0) <= 1)),
     );
 
-    const stage5Users = rows.filter(
-      (m) =>
-        (m.journeyWeek || 0) >= 2 ||
-        Number(m.interview || 0) > 0 ||
-        Number(m.assignment || 0) > 0,
+    // 5. STAGE 5 (Advanced Weeks 2, 3, 4 Progression)
+    //    STRICT: ONLY members who actually reached currentWeek >= 2!
+    //    Never include anyone in Week 0 or Week 1!
+    const stage5Users = stage4Users.filter(
+      (m) => m.journeyWeek !== null && m.journeyWeek !== undefined && m.journeyWeek >= 2,
     );
     const stalledStage5 = stage5Users.filter(
-      (m) =>
-        (m.journeyCompletedNodes ?? 0) < 15 && Number(m.decision || 0) === 0,
+      (m) => m.journeyNodeCode !== 'FINAL_REPORT',
     );
 
-    const stage6Users = rows.filter(
-      (m) =>
-        (m.journeyCompletedNodes ?? 0) >= 15 ||
-        m.journeyNodeCode === 'FINAL_REPORT' ||
-        Number(m.decision || 0) > 0,
+    // 6. STAGE 6 (30-Day Graduation & Final Report)
+    //    STRICT: ONLY members who completed FINAL_REPORT!
+    //    Strictly prohibited from putting T3lm or any Week 0/1 user here!
+    const stage6Users = stage5Users.filter(
+      (m) => m.journeyNodeCode === 'FINAL_REPORT' && (m.journeyCompletedNodes ?? 0) >= 20,
     );
     const stalledStage6 = stage6Users;
 
@@ -1307,30 +1319,30 @@ export class AdminService {
       {
         code: 'STAGE_4_TASK_0_DONE',
         order: 4,
-        titleAr: '04. اجتياز المهمة صفر وفتح المجموعة (5+ طلبات)',
-        titleEn: '04. Task 0 Complete (5+ Apps)',
-        descriptionAr: 'أنجز الحد الأدنى (5 تقديمات) وانتقل لمهام الأسبوع الأول',
-        descriptionEn: 'Reached 5 applications and unlocked cohort group',
+        titleAr: '04. اجتياز المهمة صفر والانطلاق في الأسبوع 1',
+        titleEn: '04. Task 0 Complete & Week 1 Launch',
+        descriptionAr: 'أتم 5 تقديمات واجتاز المهمة صفر وانطلق في الأسبوع الأول',
+        descriptionEn: 'Completed Task 0 (5+ applications) and unlocked Week 1',
         users: stage4Users,
         stalled: stalledStage4,
       },
       {
         code: 'STAGE_5_ADVANCED_INTERVIEWS',
         order: 5,
-        titleAr: '05. التقدم في الأسابيع المتقدمة والوصول للمقابلات',
-        titleEn: '05. Advanced Weeks & Interviews',
-        descriptionAr: 'تجاوز الأسبوع الثاني وحصل على مقابلات أولية أو أسيمنت',
-        descriptionEn: 'Reached Week 2+ or received interview calls',
+        titleAr: '05. التقدم في الأسابيع المتقدمة (الأسبوع 2 و 3 و 4)',
+        titleEn: '05. Advanced Weeks (Weeks 2-4)',
+        descriptionAr: 'وصل فعلياً إلى الأسبوع الثاني أو ما بعده في مسار الرحلة',
+        descriptionEn: 'Progressed to Week 2+ with tailored applications & branding',
         users: stage5Users,
         stalled: stalledStage5,
       },
       {
         code: 'STAGE_6_COMPLETED_OR_HIRED',
         order: 6,
-        titleAr: '06. إتمام رحلة الـ 30 يوماً أو الحصول على عرض عمل',
-        titleEn: '06. Graduation & Placement',
-        descriptionAr: 'أتم الرحلة بالكامل أو وصل إلى مرحلة القرار والعرض الوظيفي',
-        descriptionEn: 'Completed 30-day journey or reached final offer',
+        titleAr: '06. إتمام رحلة الـ 30 يوماً والتقرير النهائي',
+        titleEn: '06. 30-Day Graduation & Final Report',
+        descriptionAr: 'أتم كافة محطات الرحلة الـ 26 وقدم التقرير النهائي بنجاح',
+        descriptionEn: 'Successfully completed all 26 nodes and filed Final Report',
         users: stage6Users,
         stalled: stalledStage6,
       },

@@ -19,6 +19,7 @@ import {
   UserJourneyState,
   Prisma,
 } from '@prisma/client';
+import { reportApplicationSelect, reportMetrics } from './reporting.util';
 import { createHash } from 'node:crypto';
 import { isWeeklyReflection, professionalTasksUnlocked } from './journey-rules';
 import { GroupAssignmentService } from '../members/group-assignment.service';
@@ -800,7 +801,7 @@ export class JourneyEngineService implements OnModuleInit {
     // Replaying an accepted action remains safe even if that action advanced the node.
     if (existing) return { submission: existing, journeyState: await this.evaluateProgress(userId) };
     const node = await this.getNodeByCode(nodeCode);
-    if (!node || nodeCode !== state.currentNodeCode || (state.completedNodeCodes ?? []).includes(nodeCode)) {
+    if (!node || nodeCode !== state.currentNodeCode || (dto.type !== SideTaskType.USER_CHANGE && (state.completedNodeCodes ?? []).includes(nodeCode))) {
       throw new ForbiddenException('Submit activities only for your current active quest');
     }
     const require = (condition: unknown, message: string) => {
@@ -1011,48 +1012,11 @@ export class JourneyEngineService implements OnModuleInit {
       (n) => n.weekNumber === state.currentWeek,
     );
 
-    const [totalApplications, tailoredApplications, interviewsOrResponses] =
-      await Promise.all([
-        this.prisma?.application?.count
-          ? this.prisma.application.count({
-              where: { userId, journeyWeek: state.currentWeek },
-            })
-          : Promise.resolve(0),
-        this.prisma?.application?.count
-          ? this.prisma.application.count({
-              where: {
-                userId,
-                journeyWeek: state.currentWeek,
-                isTailored: true,
-              },
-            })
-          : Promise.resolve(0),
-        this.prisma?.application?.count
-          ? this.prisma.application.count({
-              where: {
-                userId,
-                journeyWeek: state.currentWeek,
-                OR: [
-                  { stage: { not: ApplicationStage.APPLIED } },
-                  {
-                    outcome: {
-                      in: [
-                        ApplicationOutcome.ACCEPTED,
-                        ApplicationOutcome.REJECTED,
-                      ],
-                    },
-                  },
-                  { hasAssignment: true },
-                ],
-              },
-            })
-          : Promise.resolve(0),
-      ]);
-
-    const conversionRate =
-      totalApplications > 0
-        ? Math.round((interviewsOrResponses / totalApplications) * 10000) / 100
-        : 0;
+    const apps = this.prisma?.application?.findMany
+      ? await this.prisma.application.findMany({ where: { userId, journeyWeek: state.currentWeek }, select: reportApplicationSelect }) : [];
+    const metrics = reportMetrics(apps);
+    const totalApplications = metrics.logged, tailoredApplications = metrics.tailored;
+    const interviewsOrResponses = metrics.positive, conversionRate = metrics.positiveRate ?? 0;
 
     return {
       state,
@@ -1072,6 +1036,54 @@ export class JourneyEngineService implements OnModuleInit {
         conversionRate,
       },
     };
+  }
+
+  async getReports(userId: string) {
+    await this.getOrCreateUserState(userId);
+    // One repeatable snapshot: all owned rows, no client pagination limit.
+    return this.prisma.$transaction(async tx => {
+      const apps = await tx.application.findMany({ where: { userId }, select: reportApplicationSelect });
+      const activities = await tx.sideTaskSubmission.findMany({ where: { userId }, orderBy: { createdAt: 'asc' } });
+      const cvs = await tx.userCvHistory.findMany({ where: { userId }, orderBy: [{ uploadedAt: 'asc' }, { versionNumber: 'asc' }],
+        select: { id: true, versionNumber: true, originalName: true, uploadedAt: true } });
+      const tasks = await tx.task.findMany({ where: { userId, status: 'DONE' }, select: { id: true, title: true, completedAt: true } });
+      const snapshot = await tx.userJourneyState.findUniqueOrThrow({ where: { userId } });
+      const activityCounts = (week?: number) => {
+        const rows=activities.filter(a => week === undefined || a.journeyWeek===week);
+        return { posts:rows.filter(a=>a.type==='LINKEDIN_POST').length,
+          outreach:rows.filter(a=>a.type==='OUTREACH_CONTACT').length,
+          reviews:rows.filter(a=>a.type==='WEEKLY_REVIEW' && isWeeklyReflection(a.reviewSummary)).length };
+      };
+      const days = new Map<string, {date:string;logged:number;positiveEvents:number}>();
+      const day = (date:Date) => { const key=date.toISOString().slice(0,10);if(!days.has(key))days.set(key,{date:key,logged:0,positiveEvents:0});return days.get(key)!; };
+      for (const app of apps) {
+        day(app.createdAt).logged++;
+        // Events are actual transition dates, including late responses to earlier cohorts.
+        for(const t of app.transitions) if(['ASSIGNMENT','INTERVIEW','DECISION'].includes(t.toStage) || t.outcome==='ACCEPTED') day(t.changedAt).positiveEvents++;
+      }
+      return { asOf:new Date(), overall:{...reportMetrics(apps),...activityCounts()},
+        weeks:[0,1,2,3,4].map(week=>({week,...reportMetrics(apps.filter(a=>a.journeyWeek===week)),...activityCounts(week)})),
+        daily:[...days.values()].sort((a,b)=>a.date.localeCompare(b.date)),
+        cvs, tasks, activities:activities.map(a=>({id:a.id,week:a.journeyWeek,type:a.type,summary:a.reviewSummary,
+          postUrl:a.postUrl,postTopic:a.postTopic,contactName:a.contactName,companyName:a.companyName,createdAt:a.createdAt,
+          legacyChange:a.type==='WEEKLY_REVIEW' && !isWeeklyReflection(a.reviewSummary)})),
+        readInsightCodes:snapshot.readInsightCodes, completedNodeCodes:snapshot.completedNodeCodes,
+        currentNodeCode:snapshot.currentNodeCode, currentWeek:snapshot.currentWeek,
+        finalAvailable:snapshot.currentNodeCode==='FINAL_REPORT', completed:snapshot.completedNodeCodes.includes('FINAL_REPORT'),
+      };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+  }
+
+  async completeFinalReport(userId: string) {
+    const state=await this.getOrCreateUserState(userId);
+    if(state.completedNodeCodes.includes('FINAL_REPORT')) return state;
+    const nodes=await this.getAllNodes();
+    const final=nodes.find(n=>n.code==='FINAL_REPORT');
+    if(!final || state.currentNodeCode!=='FINAL_REPORT' || nodes.some(n=>n.orderIndex<final.orderIndex && !state.completedNodeCodes.includes(n.code))) {
+      throw new ForbiddenException('Complete all preceding journey milestones before acknowledging the final report');
+    }
+    await this.prisma.userJourneyState.updateMany({where:{userId,currentNodeCode:'FINAL_REPORT',NOT:{completedNodeCodes:{has:'FINAL_REPORT'}}},data:{completedNodeCodes:{push:'FINAL_REPORT'}}});
+    return this.prisma.userJourneyState.findUniqueOrThrow({where:{userId}});
   }
 
   async getJobMarketCompass(

@@ -80,6 +80,7 @@ type MemberRow = {
   journeyWeek?: number | null;
   journeyNodeStartedAt?: Date | null;
   journeyCompletedNodes?: number | null;
+  journeyFinished?: boolean;
   journeyRequiredApps?: number | null;
   journeyNodeApps?: number | null;
   journeyNodeTitleAr?: string | null;
@@ -181,6 +182,7 @@ export class AdminService {
         COALESCE(js."currentWeek", 0) AS journey_week,
         js."currentNodeStartedAt" AS node_started_at,
         COALESCE(array_length(js."completedNodeCodes", 1), 0) AS completed_nodes,
+        COALESCE('FINAL_REPORT' = ANY(js."completedNodeCodes"), false) AS journey_finished,
         COALESCE(jn."requiredAppsCount", 5) AS node_required_apps,
         jn."titleAr" AS node_title_ar,
         jn."titleEn" AS node_title_en,
@@ -229,7 +231,7 @@ export class AdminService {
         COALESCE(a.closed, 0)::int AS closed,
         d."activeTasks", d."inProgressTasks", d."overdueTasks", d."lastTaskAt",
         j.node_code AS "journeyNodeCode", j.journey_week AS "journeyWeek",
-        j.node_started_at AS "journeyNodeStartedAt", j.completed_nodes AS "journeyCompletedNodes",
+        j.node_started_at AS "journeyNodeStartedAt", j.completed_nodes AS "journeyCompletedNodes", j.journey_finished AS "journeyFinished",
         j.node_required_apps AS "journeyRequiredApps", j.node_apps AS "journeyNodeApps",
         j.node_title_ar AS "journeyNodeTitleAr", j.node_title_en AS "journeyNodeTitleEn",
         j.days_in_node AS "journeyDaysInNode"
@@ -342,7 +344,7 @@ export class AdminService {
       >(Prisma.sql`WITH ${this.journeyCte()}
         SELECT journey_week AS week, COUNT(*)::int AS members,
           COUNT(*) FILTER (WHERE node_code = 'TASK_0' AND node_apps = 0)::int AS "notStarted",
-          COUNT(*) FILTER (WHERE node_code = 'FINAL_REPORT')::int AS finished
+          COUNT(*) FILTER (WHERE journey_finished)::int AS finished
         FROM journey GROUP BY journey_week ORDER BY journey_week`),
     ]);
     const weeks = [0, 1, 2, 3, 4].map((week) => {
@@ -1153,7 +1155,9 @@ export class AdminService {
 
     for (const m of rows) {
       let stageCode = 'JOURNEY_COMPLETED';
-      if (!m.profileComplete) {
+      if (m.journeyFinished) {
+        stageCode = 'JOURNEY_COMPLETED';
+      } else if (!m.profileComplete) {
         stageCode = 'ONBOARDING_INCOMPLETE';
       } else if (Number(m.applicationsCount || 0) === 0) {
         stageCode = 'ONBOARDING_DONE_ZERO_APPS';
@@ -1170,11 +1174,7 @@ export class AdminService {
         stageCode = 'WEEK_3';
       } else if (m.journeyWeek === 4) {
         stageCode = 'WEEK_4';
-      } else if (
-        m.journeyNodeCode === 'FINAL_REPORT' ||
-        (m.journeyCompletedNodes ?? 0) >= 15
-      ) {
-        stageCode = 'JOURNEY_COMPLETED';
+
       } else {
         stageCode = 'WEEK_1';
       }

@@ -23,6 +23,12 @@ import { JourneyEngineService } from './journey-engine.service';
 export class JourneyEngineController {
   constructor(private readonly journeyEngine: JourneyEngineService) {}
 
+  @Get('reports')
+  getReports(@CurrentUser('id') userId: string) { return this.journeyEngine.getReports(userId); }
+
+  @Post('final-report/complete')
+  completeFinal(@CurrentUser('id') userId: string) { return this.journeyEngine.completeFinalReport(userId); }
+
   @Get('state')
   getState(@CurrentUser('id') userId: string) {
     return this.journeyEngine.getJourneyStateSummary(userId);

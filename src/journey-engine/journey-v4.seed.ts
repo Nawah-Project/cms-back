@@ -519,22 +519,9 @@ export async function seedJourneyV4Nodes(
   for (const node of JOURNEY_V4_NODES) {
     await client.journeyNode.upsert({
       where: { code: node.code },
-      update: {
-        weekNumber: node.weekNumber,
-        orderIndex: node.orderIndex,
-        nodeType: node.nodeType,
-        titleAr: node.titleAr,
-        titleEn: node.titleEn,
-        descriptionAr: node.descriptionAr,
-        descriptionEn: node.descriptionEn,
-        durationDays: node.durationDays,
-        requiredAppsCount: node.requiredAppsCount,
-        requiredTailoredCount: node.requiredTailoredCount,
-        requiredPostsCount: node.requiredPostsCount,
-        requiredOutreachCount: node.requiredOutreachCount,
-        unlocksInsightCode: node.unlocksInsightCode,
-        nextNodeCode: node.nextNodeCode,
-      },
+      // Existing rows belong to administrator configuration. Reinitialization
+      // only fills missing codes; changes to existing defaults need explicit maintenance.
+      update: {},
       create: {
         code: node.code,
         weekNumber: node.weekNumber,

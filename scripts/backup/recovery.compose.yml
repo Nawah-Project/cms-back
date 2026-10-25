@@ -1,0 +1,34 @@
+# Disposable recovery only: no application startup, no external network, no ports.
+# Use a NEW project beginning with nawah-recovery-. Never attach source volumes.
+services:
+  postgres:
+    image: ${RECOVERY_POSTGRES_IMAGE:?Use a locally available compatible PostgreSQL image}
+    labels:
+      io.nawah.recovery: "true"
+    environment:
+      POSTGRES_USER: ${RECOVERY_POSTGRES_USER:?Set an isolated recovery role}
+      POSTGRES_PASSWORD: ${RECOVERY_POSTGRES_PASSWORD:?Set a new recovery password}
+      POSTGRES_DB: ${RECOVERY_POSTGRES_DB:?Set a fresh recovery database}
+    volumes:
+      - recovery-db:/var/lib/postgresql/data
+    networks: [recovery]
+
+  # A stopped carrier for CV storage, not the application image/entrypoint.
+  api:
+    image: ${RECOVERY_POSTGRES_IMAGE:?Use a locally available compatible PostgreSQL image}
+    labels:
+      io.nawah.recovery: "true"
+    entrypoint: ["sh", "-c", "sleep infinity"]
+    environment:
+      CV_STORAGE_DIR: /recovery/cvs
+    volumes:
+      - recovery-cvs:/recovery/cvs
+    networks: [recovery]
+
+volumes:
+  recovery-db:
+  recovery-cvs:
+
+networks:
+  recovery:
+    internal: true

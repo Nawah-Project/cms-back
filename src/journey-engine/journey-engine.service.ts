@@ -94,7 +94,6 @@ export class JourneyEngineService implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     try {
       await seedJourneyV4Nodes(this.prisma);
-      await this.cleanupCorruptedData();
       await this.deduplicateNotifications();
     } catch {
       // Allow application startup in test or dry-run environments without DB connectivity
@@ -142,38 +141,6 @@ export class JourneyEngineService implements OnModuleInit {
       return totalDeleted;
     } catch {
       return 0;
-    }
-  }
-
-  async cleanupCorruptedData(): Promise<void> {
-    if (!this.prisma?.sideTaskSubmission?.deleteMany) return;
-    try {
-      await this.prisma.sideTaskSubmission.deleteMany({
-        where: {
-          OR: [
-            { reviewSummary: { contains: 'غلط' } },
-            { reviewSummary: { contains: 'اسبام' } },
-            { postTopic: { contains: 'غلط' } },
-            { postTopic: { contains: 'اسبام' } },
-          ],
-        },
-      });
-
-      const states = await this.prisma.userJourneyState.findMany();
-      for (const state of states) {
-        const cvCount = await this.prisma.userCvHistory.count({
-          where: { userId: state.userId },
-        });
-        const actualVersion = Math.max(1, cvCount);
-        if (state.cvVersionNumber !== actualVersion) {
-          await this.prisma.userJourneyState.update({
-            where: { userId: state.userId },
-            data: { cvVersionNumber: actualVersion },
-          });
-        }
-      }
-    } catch {
-      // safe fallback
     }
   }
 
@@ -1212,7 +1179,6 @@ export class JourneyEngineService implements OnModuleInit {
   // Admin Journey Nodes Management
   // ============================================================================
   async getAdminJourneyNodes(): Promise<JourneyNode[]> {
-    await seedJourneyV4Nodes(this.prisma);
     return this.prisma.journeyNode.findMany({
       orderBy: [{ orderIndex: 'asc' }],
     });

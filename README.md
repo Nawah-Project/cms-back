@@ -22,7 +22,7 @@ The production stack is in `compose.yml`; it builds the API and frontend, starts
 4. Build and start the stack: `docker compose -f compose.yml up --build -d`.
 5. Check readiness with `curl http://127.0.0.1:3000/health` and inspect startup output with `docker compose -f compose.yml logs api`.
 
-The API rejects production startup if database configuration, HTTPS CORS origins, persistent CV storage, or distinct 32-byte JWT secrets are missing/invalid. `prisma migrate deploy` runs at API startup; no seeding or demo data is run. Back up the named `cms-postgres-data` and `cv-storage` volumes separately. Rate limits use in-process memory, and CV files use a local persistent volume; this deployment is intended for a single API instance on one host. Multiple API replicas need shared CV storage and a shared rate-limit store.
+The API rejects production startup if database configuration, HTTPS CORS origins, persistent CV storage, or distinct 32-byte JWT secrets are missing/invalid. `prisma migrate deploy` runs at API startup. Journey initialization creates missing default nodes without overwriting administrator changes; it does not delete submissions or normalize CV versions. Back up PostgreSQL and CV files together at a quiesced consistency point; see [backup and isolated recovery instructions](scripts/backup/README.md). Rate limits use in-process memory, and CV files use a local persistent volume; this deployment is intended for a single API instance on one host. Multiple API replicas need shared CV storage and a shared rate-limit store.
 
 The container images could not be built in this environment because the Docker CLI cannot access `/var/run/docker.sock`; `docker compose config` validation is available without daemon access.
 

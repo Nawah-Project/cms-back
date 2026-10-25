@@ -1,0 +1,11 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": ".",
+  "setupFiles": ["<rootDir>/load-env.ts"],
+  "testEnvironment": "node",
+  "testRegex": "journey-initialization\\.integration-spec\\.ts$",
+  "transformIgnorePatterns": ["node_modules/(?!(@nestjs/event-emitter)/)"],
+  "transform": {
+    "^.+\\.(t|j)s$": ["ts-jest", { "tsconfig": { "allowJs": true } }]
+  }
+}

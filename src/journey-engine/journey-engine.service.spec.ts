@@ -20,6 +20,7 @@ describe('JourneyEngineService (Journey V4 State Machine)', () => {
       currentNodeCode: 'TASK_0',
       currentNodeStartedAt: new Date('2026-10-20T00:00:00.000Z'),
       weekStartedAt: new Date('2026-10-20T00:00:00.000Z'),
+      week1StartedAt: new Date('2026-10-20T00:00:00.000Z'),
       completedNodeCodes: [],
       unlockedInsightCodes: [],
       isGroupUnlocked: false,
@@ -55,6 +56,7 @@ describe('JourneyEngineService (Journey V4 State Machine)', () => {
       },
       sideTaskSubmission: {
         count: jest.fn().mockResolvedValue(0),
+        findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn(async ({ data }) => ({
           id: 'sidetask-1',
           createdAt: new Date(),
@@ -63,6 +65,7 @@ describe('JourneyEngineService (Journey V4 State Machine)', () => {
         findMany: jest.fn().mockResolvedValue([]),
       },
       notification: {
+        findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn(async ({ data }) => ({
           id: 'notif-1',
           isRead: false,
@@ -76,6 +79,7 @@ describe('JourneyEngineService (Journey V4 State Machine)', () => {
       },
       user: {
         findUnique: jest.fn().mockResolvedValue({
+          role: 'USER',
           targetJobTitle: 'Frontend Developer',
           preferredLocations: ['Cairo'],
         }),
@@ -338,11 +342,11 @@ describe('JourneyEngineService (Journey V4 State Machine)', () => {
 
   describe('4. Advanced Interview Prep & Job Market Compass', () => {
     it('unlocks INSIGHT_INTERVIEW_ADVANCED on first interview or assignment if basic guide is read', async () => {
-      (prismaMock.application.count as jest.Mock).mockResolvedValue(1);
-      (prismaMock as any).feedbackPost = {
+      prisma.application.count.mockResolvedValue(1);
+      prisma.feedbackPost = {
         findFirst: jest.fn().mockResolvedValue({ id: 'fp-basic' }),
       };
-      (prismaMock as any).feedbackRead = {
+      prisma.feedbackRead = {
         findUnique: jest.fn().mockResolvedValue({
           feedbackId: 'fp-basic',
           userId: 'user-1',

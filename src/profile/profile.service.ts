@@ -10,12 +10,13 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Prisma, UserRole } from '@prisma/client';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Dirent } from 'node:fs';
 import {
   access,
   mkdir,
   readdir,
+  readFile,
   stat,
   unlink,
   writeFile,
@@ -207,107 +208,44 @@ export class ProfileService
 
   async uploadCv(userId: string, file: UploadedCvFile | undefined) {
     if (!file) throw new BadRequestException('A CV file is required');
-    if (file.size > CV_MAX_FILE_SIZE_BYTES) {
-      throw new PayloadTooLargeException(
-        'The CV exceeds the configured size limit',
-      );
-    }
+    if (file.size > CV_MAX_FILE_SIZE_BYTES) throw new PayloadTooLargeException('The CV exceeds the configured size limit');
     validateCvFileContent(file);
-
+    const contentHash = createHash('sha256').update(file.buffer).digest('hex');
+    const legacy = await this.prisma.userCv.findUnique({ where: { userId } });
+    let legacyMatches = false;
+    if (legacy && !legacy.contentHash && STORAGE_KEY_PATTERN.test(legacy.storageKey)) {
+      try {
+        legacyMatches = createHash('sha256').update(await readFile(join(this.storageDir, legacy.storageKey))).digest('hex') === contentHash;
+      } catch { /* A missing legacy file requires a real replacement. */ }
+    }
     const storageKey = `${randomUUID()}.pdf`;
-    const newFilePath = join(this.storageDir, storageKey);
-    const originalName = sanitizeCvOriginalName(file.originalname);
     await mkdir(this.storageDir, { recursive: true, mode: 0o700 });
-    await writeFile(newFilePath, file.buffer, { flag: 'wx', mode: 0o600 });
-
+    await writeFile(join(this.storageDir, storageKey), file.buffer, { flag: 'wx', mode: 0o600 });
     try {
-      const result = await this.prisma.$transaction(
-        async (transaction) => {
-          const previous = await transaction.userCv.findUnique({
-            where: { userId },
-            select: { storageKey: true },
-          });
-
-          let newCvVersion = 1;
-          if (previous) {
-            const journeyState = await transaction.userJourneyState.findUnique({
-              where: { userId },
-            });
-            const currentVersion = journeyState?.cvVersionNumber || 1;
-            newCvVersion = currentVersion + 1;
-
-            if (journeyState) {
-              await transaction.userJourneyState.update({
-                where: { userId },
-                data: { cvVersionNumber: newCvVersion },
-              });
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const result = await this.prisma.$transaction(async (tx) => {
+            const previous = await tx.userCv.findUnique({ where: { userId } });
+            if (previous && (previous.contentHash === contentHash || (legacyMatches && previous.storageKey === legacy?.storageKey))) {
+              return { cv: previous, reused: true };
             }
-
-            const appCount = await transaction.application.count({
-              where: { userId },
-            });
-
-            await transaction.sideTaskSubmission.create({
-              data: {
-                userId,
-                nodeCode: journeyState?.currentNodeCode || 'CV_UPDATE',
-                journeyWeek: journeyState?.currentWeek || 1,
-                type: 'WEEKLY_REVIEW',
-                newCvUploaded: true,
-                reviewSummary: JSON.stringify({
-                  isUserChange: true,
-                  category: 'CV_UPDATE',
-                  title: `تحديث السيرة الذاتية (CV v${newCvVersion})`,
-                  note: `تم رفع ملف سيرة ذاتية جديد (${originalName})`,
-                  appCountAtChange: appCount,
-                  cvVersion: newCvVersion,
-                }),
-              },
-            });
-          }
-
-          await transaction.userCvHistory.create({
-            data: {
-              userId,
-              versionNumber: newCvVersion,
-              originalName,
-              mimeType: CV_MIME_TYPE,
-              size: file.buffer.length,
-              storageKey,
-            },
-          });
-
-          const cv = await transaction.userCv.upsert({
-            where: { userId },
-            create: {
-              userId,
-              originalName,
-              mimeType: CV_MIME_TYPE,
-              size: file.buffer.length,
-              storageKey,
-            },
-            update: {
-              originalName,
-              mimeType: CV_MIME_TYPE,
-              size: file.buffer.length,
-              storageKey,
-              uploadedAt: new Date(),
-            },
-            select: {
-              id: true,
-              originalName: true,
-              mimeType: true,
-              size: true,
-              uploadedAt: true,
-            },
-          });
-          return { cv, previousStorageKey: previous?.storageKey };
-        },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-      );
-
-      // We preserve previous CV files on disk so users can access their CV History
-      return toSafeCvMetadata(result.cv);
+            const [state, latest] = await Promise.all([
+              tx.userJourneyState.findUnique({ where: { userId } }),
+              tx.userCvHistory.findFirst({ where: { userId }, orderBy: { versionNumber: 'desc' } }),
+            ]);
+            const versionNumber = previous || latest ? Math.max(state?.cvVersionNumber ?? 0, latest?.versionNumber ?? 0) + 1 : 1;
+            const data = { originalName: sanitizeCvOriginalName(file.originalname), mimeType: CV_MIME_TYPE, size: file.buffer.length, storageKey };
+            await tx.userCvHistory.create({ data: { userId, versionNumber, ...data } });
+            if (state) await tx.userJourneyState.update({ where: { userId }, data: { cvVersionNumber: versionNumber } });
+            const cv = await tx.userCv.upsert({ where: { userId }, create: { userId, ...data, contentHash }, update: { ...data, contentHash, uploadedAt: new Date() } });
+            return { cv, reused: false };
+          }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+          if (result.reused) await this.deleteStoredCv(storageKey);
+          return toSafeCvMetadata(result.cv);
+        } catch (error) {
+          if ((error as { code?: string }).code !== 'P2034' || attempt >= 4) throw error;
+        }
+      }
     } catch (error) {
       await this.deleteStoredCv(storageKey);
       throw error;

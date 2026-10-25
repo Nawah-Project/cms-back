@@ -23,6 +23,7 @@ describe('JourneyEngineService (Journey V4 State Machine)', () => {
       week1StartedAt: new Date('2026-10-20T00:00:00.000Z'),
       completedNodeCodes: [],
       unlockedInsightCodes: [],
+      readInsightCodes: [],
       isGroupUnlocked: false,
       canUseTableView: false,
       hasUnlockedAdvPrep: false,
@@ -324,7 +325,7 @@ describe('JourneyEngineService (Journey V4 State Machine)', () => {
         currentNodeCode: 'W1_REVIEW',
       };
 
-      prisma.sideTaskSubmission.count.mockResolvedValueOnce(1);
+      prisma.sideTaskSubmission.findMany.mockResolvedValueOnce([{ reviewSummary: 'Reviewed the week' }]);
 
       const result = await service.submitSideTask('user-1', {
         type: SideTaskType.WEEKLY_REVIEW,

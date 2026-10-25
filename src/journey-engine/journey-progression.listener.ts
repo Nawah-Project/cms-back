@@ -69,6 +69,10 @@ export class JourneyProgressionListener {
     unlockTriggerCode?: string | null;
   }): Promise<void> {
     if (!payload?.userId) return;
+    if (payload.unlockTriggerCode) {
+      await this.journeyEngine.markInsightRead(payload.userId, payload.unlockTriggerCode);
+      return;
+    }
     await this.journeyEngine.evaluateInterviewGuidanceUnlocks(payload.userId);
   }
 

@@ -101,6 +101,7 @@ enum SideTaskType {
   LINKEDIN_POST    // منشور
   OUTREACH_CONTACT // تواصل وبناء علاقات
   WEEKLY_REVIEW    // تسليم مراجعة وتعديل اليوم السابع
+  USER_CHANGE     // Explicit professional change log; never completes a review
 }
 
 enum OutreachStatus {
@@ -156,6 +157,7 @@ model UserCv {
   mimeType     String   @db.VarChar(100)
   size         Int
   storageKey   String   @unique @db.VarChar(64)
+  contentHash  String?  @db.VarChar(64)
   uploadedAt   DateTime @default(now())
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -430,6 +432,7 @@ model UserJourneyState {
   weekStartedAt        DateTime @default(now())
   completedNodeCodes   String[] @default([])
   unlockedInsightCodes String[] @default([])
+  readInsightCodes     String[] @default([])
   isGroupUnlocked      Boolean  @default(false) // يفتح بعد إتمام TASK_0 (5 طلبات)
   canUseTableView      Boolean  @default(false) // يفتح بعد إتمام W1_M1 (10 طلبات في الأسبوع 1)
   hasUnlockedAdvPrep   Boolean  @default(false) // يفتح عند أول INTERVIEW أو hasAssignment
@@ -447,6 +450,7 @@ model SideTaskSubmission {
   nodeCode      String          @db.VarChar(50)
   journeyWeek   Int
   type          SideTaskType
+  requestKey    String?         @db.VarChar(64)
   // حقول خاصة بـ LINKEDIN_POST
   postUrl       String?         @db.VarChar(2048)
   postTopic     String?         @db.VarChar(300)
@@ -465,6 +469,7 @@ model SideTaskSubmission {
   createdAt     DateTime        @default(now())
 
   @@index([userId, nodeCode, type])
+  @@unique([userId, requestKey])
   @@index([userId, journeyWeek])
   @@map("side_task_submissions")
 }

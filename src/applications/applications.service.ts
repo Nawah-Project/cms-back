@@ -145,7 +145,7 @@ export class ApplicationsService {
       },
     });
 
-    this.eventEmitter?.emit('application.created', {
+    await this.eventEmitter?.emitAsync('application.created', {
       userId,
       applicationId: created.id,
       companyName: created.companyName,
@@ -221,7 +221,9 @@ export class ApplicationsService {
     id: string,
     updateDto: UpdateApplicationDto,
   ): Promise<DbApplication> {
-    return this.prisma.$transaction(async (transaction) => {
+    let transition: { userId: string; applicationId: string; fromStage: string; toStage: string; outcome: string | null } | undefined;
+    let changed = false;
+    const result = await this.prisma.$transaction(async (transaction) => {
       const application = await transaction.application.findFirst({
         where: { id, userId },
       });
@@ -348,6 +350,7 @@ export class ApplicationsService {
         data.sharedWithGroup = updateDto.sharedWithGroup;
       }
       if (Object.keys(data).length === 0) return application;
+      changed = true;
       const updated = await transaction.application.update({
         where: { id },
         data,
@@ -366,35 +369,21 @@ export class ApplicationsService {
                 : null,
           },
         });
-      }
-
-      this.eventEmitter?.emit('application.updated', {
-        userId,
-        applicationId: updated.id,
-        companyName: updated.companyName,
-        jobTitle: updated.jobTitle,
-        stage: updated.stage,
-        outcome: updated.outcome,
-        hasAssignment: updated.hasAssignment,
-        isTailored: updated.isTailored,
-        sharedWithGroup: updated.sharedWithGroup,
-      });
-
-      if (stageChanged) {
-        this.eventEmitter?.emit('application.stage_changed', {
-          userId,
-          applicationId: updated.id,
-          fromStage: previousStage,
-          toStage: nextStage,
-          outcome:
-            nextStage === ApplicationStage.CLOSED
-              ? (nextOutcome as DbApplicationOutcome)
-              : null,
-        });
+        transition = { userId, applicationId: updated.id, fromStage: previousStage,
+          toStage: nextStage, outcome: nextStage === ApplicationStage.CLOSED ? nextOutcome : null };
       }
 
       return updated;
     });
+    if (!changed) return result;
+    await this.eventEmitter?.emitAsync('application.updated', {
+      userId, applicationId: result.id, companyName: result.companyName,
+      jobTitle: result.jobTitle, stage: result.stage, outcome: result.outcome,
+      hasAssignment: result.hasAssignment, isTailored: result.isTailored,
+      sharedWithGroup: result.sharedWithGroup,
+    });
+    if (transition) await this.eventEmitter?.emitAsync('application.stage_changed', transition);
+    return result;
   }
 
   async remove(

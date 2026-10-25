@@ -6,6 +6,7 @@ import {
   TasksController,
 } from './tasks.controller';
 import { TasksService } from './tasks.service';
+import { TasksAccessGuard } from './tasks-access.guard';
 import { FeedbackModule } from '../feedback/feedback.module';
 
 @Module({
@@ -15,7 +16,7 @@ import { FeedbackModule } from '../feedback/feedback.module';
     AdminTasksController,
     ProfessionalDevelopmentDashboardController,
   ],
-  providers: [TasksService],
+  providers: [TasksService, TasksAccessGuard],
   exports: [TasksService],
 })
 export class TasksModule {}

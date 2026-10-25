@@ -12,6 +12,7 @@ import {
   UserRole,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { professionalTasksUnlocked } from '../journey-engine/journey-rules';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import {
@@ -69,7 +70,7 @@ export class TasksService {
     return task;
   }
 
-  private async assertProfDevUnlocked(userId: string): Promise<void> {
+  async assertProfDevUnlocked(userId: string): Promise<void> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -79,6 +80,7 @@ export class TasksService {
             isGroupUnlocked: true,
             completedNodeCodes: true,
             currentWeek: true,
+            readInsightCodes: true,
           },
         },
       },
@@ -86,13 +88,10 @@ export class TasksService {
     if (!user) throw new NotFoundException('User not found');
     if (user.role === UserRole.ADMIN) return;
     const js = user.journeyState;
-    const isUnlocked =
-      js?.isGroupUnlocked ||
-      (js?.completedNodeCodes ?? []).includes('TASK_0') ||
-      (js?.currentWeek ?? 0) >= 1;
+    const isUnlocked = professionalTasksUnlocked(js?.currentWeek ?? 0, js?.readInsightCodes ?? []);
     if (!isUnlocked) {
       throw new ForbiddenException(
-        'Professional development is locked until Task 0 is completed',
+        'Professional tasks unlock after reading the Week 3 time-management guidance',
       );
     }
   }

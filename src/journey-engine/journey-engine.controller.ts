@@ -28,6 +28,11 @@ export class JourneyEngineController {
     return this.journeyEngine.getJourneyStateSummary(userId);
   }
 
+  @Post('insights/:code/read')
+  markInsightRead(@CurrentUser('id') userId: string, @Param('code') code: string) {
+    return this.journeyEngine.markInsightRead(userId, code);
+  }
+
   @Post('side-tasks')
   @HttpCode(HttpStatus.CREATED)
   submitSideTask(

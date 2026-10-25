@@ -368,12 +368,18 @@ export class FeedbackService implements OnApplicationBootstrap {
     } satisfies Prisma.FeedbackPostWhereInput;
   }
 
+  private async unlockedWhere(userId: string): Promise<Prisma.FeedbackPostWhereInput> {
+    const state = await this.prisma.userJourneyState.findUnique({ where: { userId } });
+    return { OR: [{ unlockTriggerCode: null }, { unlockTriggerCode: { in: state?.unlockedInsightCodes ?? [] } }] };
+  }
+
   async listForMember(userId: string, query: FeedbackQueryDto) {
     const scope = query.scope ?? 'shared';
     const limit = Math.min(50, Math.max(1, Math.floor(query.limit) || 20));
     const page = Math.max(1, Math.floor(query.page) || 1);
     const where: Prisma.FeedbackPostWhereInput = {
       ...(await this.authorizedWhere(userId, scope)),
+      AND: [await this.unlockedWhere(userId)],
       archivedAt: null,
       ...(query.kind === 'guidance'
         ? { unlockTriggerCode: { not: null } }
@@ -409,6 +415,7 @@ export class FeedbackService implements OnApplicationBootstrap {
       where: {
         id,
         archivedAt: null,
+        AND: [await this.unlockedWhere(userId)],
         OR: [
           { visibility: FeedbackVisibility.DIRECT, targetUserId: userId },
           { visibility: FeedbackVisibility.ALL },
@@ -440,7 +447,7 @@ export class FeedbackService implements OnApplicationBootstrap {
       select: { feedbackId: true, userId: true, readAt: true },
     });
 
-    this.eventEmitter?.emit('feedback.read', {
+    await this.eventEmitter?.emitAsync('feedback.read', {
       userId,
       feedbackId: id,
       unlockTriggerCode: post.unlockTriggerCode,

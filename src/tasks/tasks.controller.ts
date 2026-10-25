@@ -20,12 +20,13 @@ import {
 } from './dto/task-action.dto';
 import { TaskQueryDto } from './dto/task-query.dto';
 import { TasksService } from './tasks.service';
+import { TasksAccessGuard } from './tasks-access.guard';
 import { FeedbackService } from '../feedback/feedback.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 
 @Controller('tasks')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, TasksAccessGuard)
 export class TasksController {
   constructor(private readonly tasks: TasksService) {}
 

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -16,7 +17,10 @@ import {
   SideTaskSubmission,
   SideTaskType,
   UserJourneyState,
+  Prisma,
 } from '@prisma/client';
+import { createHash } from 'node:crypto';
+import { isWeeklyReflection, professionalTasksUnlocked } from './journey-rules';
 import { GroupAssignmentService } from '../members/group-assignment.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateSideTaskDto } from './dto/create-side-task.dto';
@@ -65,6 +69,7 @@ export interface JourneyStateResponse {
   currentWeekNodes: EnrichedJourneyNode[];
   nodes: EnrichedJourneyNode[];
   weeklyStats: WeeklyConversionStats;
+  features: { groups: boolean; tableView: boolean; professionalTasks: boolean };
 }
 
 export interface JobMarketCompassPlatform {
@@ -342,14 +347,15 @@ export class JourneyEngineService implements OnModuleInit {
           })
         : Promise.resolve(0),
       node.nodeType === JourneyNodeType.REVIEW_STATION &&
-      this.prisma?.sideTaskSubmission?.count
-        ? this.prisma.sideTaskSubmission.count({
+      this.prisma?.sideTaskSubmission?.findMany
+        ? this.prisma.sideTaskSubmission.findMany({
             where: {
               userId,
               nodeCode: node.code,
               type: SideTaskType.WEEKLY_REVIEW,
             },
-          })
+            select: { reviewSummary: true },
+          }).then((rows) => rows.filter((row) => isWeeklyReflection(row.reviewSummary)).length)
         : Promise.resolve(0),
     ]);
 
@@ -425,18 +431,16 @@ export class JourneyEngineService implements OnModuleInit {
   }
 
   async evaluateProgress(userId: string): Promise<UserJourneyState> {
+    // Serialize each evaluation, including mutations arriving during an earlier count.
     const ongoing = this.activeEvaluations.get(userId);
-    if (ongoing) {
-      return ongoing;
-    }
-
-    const evaluationPromise = this.internalEvaluateProgress(userId);
+    const evaluationPromise = (ongoing ?? Promise.resolve()).catch(() => undefined)
+      .then(() => this.internalEvaluateProgress(userId));
     this.activeEvaluations.set(userId, evaluationPromise);
 
     try {
       return await evaluationPromise;
     } finally {
-      this.activeEvaluations.delete(userId);
+      if (this.activeEvaluations.get(userId) === evaluationPromise) this.activeEvaluations.delete(userId);
     }
   }
 
@@ -652,7 +656,8 @@ export class JourneyEngineService implements OnModuleInit {
       select: { id: true },
     });
 
-    let hasReadBasic = false;
+    const readState = await this.getOrCreateUserState(userId);
+    let hasReadBasic = (readState.readInsightCodes ?? []).includes('INSIGHT_W1_INTERVIEW_BASIC');
     if (basicPost) {
       const readRecord = await this.prisma.feedbackRead.findUnique({
         where: {
@@ -662,7 +667,7 @@ export class JourneyEngineService implements OnModuleInit {
           },
         },
       });
-      hasReadBasic = Boolean(readRecord);
+      hasReadBasic = hasReadBasic || Boolean(readRecord);
     }
 
     if (!hasReadBasic) {
@@ -717,6 +722,7 @@ export class JourneyEngineService implements OnModuleInit {
       where: { unlockTriggerCode: 'INSIGHT_W1_INTERVIEW_BASIC' },
       select: { id: true },
     });
+    if (!basicPost && !(state.readInsightCodes ?? []).includes('INSIGHT_W1_INTERVIEW_BASIC')) return false;
     if (basicPost) {
       const readRecord = await this.prisma.feedbackRead.findUnique({
         where: {
@@ -726,7 +732,7 @@ export class JourneyEngineService implements OnModuleInit {
           },
         },
       });
-      if (!readRecord) {
+      if (!readRecord && !(state.readInsightCodes ?? []).includes('INSIGHT_W1_INTERVIEW_BASIC')) {
         return false;
       }
     }
@@ -780,58 +786,48 @@ export class JourneyEngineService implements OnModuleInit {
       where: { id: userId },
       select: { role: true },
     });
-    const isAdmin = user?.role === 'ADMIN';
-
-    if (!isAdmin) {
-      if (
-        (dto.type === SideTaskType.LINKEDIN_POST ||
-          (dto.reviewSummary && dto.reviewSummary.includes('isUserChange'))) &&
-        state.currentWeek < 3
-      ) {
-        throw new ForbiddenException(
-          'Manual tooling and LinkedIn changes unlock in Week 3',
-        );
-      }
-
-      if (
-        dto.type === SideTaskType.OUTREACH_CONTACT &&
-        state.currentWeek < 4
-      ) {
-        throw new ForbiddenException(
-          'Outreach contact activity unlocks in Week 4',
-        );
-      }
-
-      if (dto.type === SideTaskType.WEEKLY_REVIEW) {
-        const isUserChange =
-          dto.reviewSummary && dto.reviewSummary.includes('isUserChange');
-        if (!isUserChange) {
-          const node = await this.getNodeByCode(nodeCode);
-          if (!node || node.nodeType !== JourneyNodeType.REVIEW_STATION) {
-            throw new ForbiddenException(
-              'Weekly review can only be submitted on Day 7 review checkpoint',
-            );
-          }
-        }
-      }
-
-      const tenSecondsAgo = new Date(Date.now() - 10_000);
-      const recentSubmission = await this.prisma.sideTaskSubmission.findFirst({
-        where: {
-          userId,
-          type: dto.type,
-          nodeCode,
-          createdAt: { gte: tenSecondsAgo },
-        },
-      });
-      if (recentSubmission) {
-        return { submission: recentSubmission, journeyState: state };
-      }
+    const clean = (value?: string) => value?.trim() || null;
+    const payload = {
+      nodeCode, type: dto.type, postUrl: clean(dto.postUrl), postTopic: clean(dto.postTopic),
+      applicationId: dto.applicationId ?? null, contactName: clean(dto.contactName),
+      contactRole: clean(dto.contactRole), companyName: clean(dto.companyName),
+      contactMethod: clean(dto.contactMethod), contactUrl: clean(dto.contactUrl),
+      outreachState: dto.outreachState ?? 'SENT', reviewSummary: clean(dto.reviewSummary),
+      sharedInGroup: dto.sharedInGroup ?? true,
+    };
+    const requestKey = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+    const existing = await this.prisma.sideTaskSubmission.findFirst({ where: { userId, requestKey } });
+    // Replaying an accepted action remains safe even if that action advanced the node.
+    if (existing) return { submission: existing, journeyState: await this.evaluateProgress(userId) };
+    const node = await this.getNodeByCode(nodeCode);
+    if (!node || nodeCode !== state.currentNodeCode || (state.completedNodeCodes ?? []).includes(nodeCode)) {
+      throw new ForbiddenException('Submit activities only for your current active quest');
     }
-
-    const submission = await this.prisma.sideTaskSubmission.create({
+    const require = (condition: unknown, message: string) => {
+      if (!condition) throw new BadRequestException(message);
+    };
+    if (dto.applicationId) {
+      const owned = await this.prisma.application.findFirst({ where: { id: dto.applicationId, userId } });
+      if (!owned) throw new ForbiddenException('The linked application must belong to you');
+    }
+    if (dto.type === SideTaskType.LINKEDIN_POST) {
+      require(state.currentWeek >= 3 && node.requiredPostsCount > 0, 'LinkedIn posts are not eligible for this quest');
+      require(payload.postUrl, 'A published post URL is required');
+    } else if (dto.type === SideTaskType.OUTREACH_CONTACT) {
+      require(state.currentWeek >= 4 && node.requiredOutreachCount > 0, 'Outreach is not eligible for this quest');
+      require(payload.contactName && payload.companyName && payload.contactMethod, 'Contact name, company and contact method are required');
+    } else if (dto.type === SideTaskType.WEEKLY_REVIEW) {
+      require(node.nodeType === JourneyNodeType.REVIEW_STATION, 'Weekly reflections are only accepted at the current review station');
+      require(payload.reviewSummary && isWeeklyReflection(payload.reviewSummary), 'Write a weekly reflection, not a CV/change log');
+    } else if (dto.type === SideTaskType.USER_CHANGE) {
+      require(state.currentWeek >= 3 && payload.reviewSummary, 'A professional change description is required from Week 3');
+    }
+    let submission: SideTaskSubmission;
+    try {
+    submission = await this.prisma.sideTaskSubmission.create({
       data: {
         userId,
+        requestKey,
         nodeCode,
         journeyWeek: state.currentWeek,
         type: dto.type,
@@ -848,16 +844,16 @@ export class JourneyEngineService implements OnModuleInit {
             ? (dto.outreachState ?? OutreachStatus.SENT)
             : null,
         reviewSummary: dto.reviewSummary?.trim() || null,
-        newCvUploaded: dto.newCvUploaded ?? false,
+        // Version metadata belongs exclusively to actual CV uploads.
+        newCvUploaded: false,
         sharedInGroup: dto.sharedInGroup ?? true,
       },
     });
-
-    if (dto.type === SideTaskType.WEEKLY_REVIEW && dto.newCvUploaded) {
-      await this.prisma.userJourneyState.update({
-        where: { userId },
-        data: { cvVersionNumber: { increment: 1 } },
-      });
+    } catch (error) {
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') throw error;
+      const replay = await this.prisma.sideTaskSubmission.findFirst({ where: { userId, requestKey } });
+      if (!replay) throw error;
+      submission = replay;
     }
 
     this.eventEmitter?.emit('sidetask.submitted', {
@@ -871,6 +867,28 @@ export class JourneyEngineService implements OnModuleInit {
 
     const journeyState = await this.evaluateProgress(userId);
     return { submission, journeyState };
+  }
+
+  async markInsightRead(userId: string, code: string): Promise<UserJourneyState> {
+    const state = await this.getOrCreateUserState(userId);
+    if (!(state.unlockedInsightCodes ?? []).includes(code)) throw new ForbiddenException('Complete the required quest to unlock this guidance');
+    const post = await this.prisma.feedbackPost.findFirst({ where: {
+      unlockTriggerCode: code, archivedAt: null,
+      OR: [{ visibility: 'ALL' }, { visibility: 'DIRECT', targetUserId: userId },
+        { visibility: 'GROUP', group: { memberships: { some: { userId } } } }],
+    }, orderBy: [{ publishedAt: 'desc' }, { id: 'desc' }] });
+    if (!post && !JOURNEY_GUIDANCE_CATALOG.some((item) => item.code === code)) throw new ForbiddenException('Guidance is unavailable for this participant');
+    // Atomic append is conditional, so concurrent retries cannot duplicate read codes.
+    await this.prisma.userJourneyState.updateMany({
+      where: { userId, NOT: { readInsightCodes: { has: code } } },
+      data: { readInsightCodes: { push: code } },
+    });
+    if (post) await this.prisma.feedbackRead.upsert({
+      where: { feedbackId_userId: { feedbackId: post.id, userId } },
+      create: { feedbackId: post.id, userId }, update: {},
+    });
+    await this.evaluateInterviewGuidanceUnlocks(userId);
+    return this.getOrCreateUserState(userId);
   }
 
   async getSideTasks(
@@ -1038,6 +1056,11 @@ export class JourneyEngineService implements OnModuleInit {
 
     return {
       state,
+      features: {
+        groups: (state.completedNodeCodes ?? []).includes('TASK_0') || state.currentWeek >= 1,
+        tableView: state.canUseTableView,
+        professionalTasks: professionalTasksUnlocked(state.currentWeek, state.readInsightCodes ?? []),
+      },
       currentNode,
       currentWeekNodes,
       nodes: enrichedNodes,

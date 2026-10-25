@@ -83,9 +83,9 @@ export class MembersService {
     if (!isAdmin) {
       const journey = await this.prisma.userJourneyState.findUnique({
         where: { userId },
-        select: { isGroupUnlocked: true },
+        select: { completedNodeCodes: true, currentWeek: true },
       });
-      if (!journey?.isGroupUnlocked) {
+      if (!journey || (!(journey.completedNodeCodes ?? []).includes('TASK_0') && journey.currentWeek < 1)) {
         throw new ForbiddenException(
           'Group progress unlocks after completing Task 0 (5 applications)',
         );

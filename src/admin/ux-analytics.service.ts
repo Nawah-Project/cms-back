@@ -69,6 +69,9 @@ export class UxAnalyticsService implements OnModuleInit {
     application_stage_updated: 0,
     task_status_changed: 0,
     feedback_read: 0,
+    tour_completed: 0,
+    job_explorer_clicked: 0,
+    prompt_copied: 0,
   };
   private readonly usersByEvent = new Map<SupportedUxEvent, Set<string>>();
   private readonly variantUsers: Record<ExperimentVariant, Set<string>> = {

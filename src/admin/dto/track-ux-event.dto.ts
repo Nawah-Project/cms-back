@@ -14,6 +14,9 @@ export const SUPPORTED_UX_EVENTS = [
   'application_stage_updated',
   'task_status_changed',
   'feedback_read',
+  'tour_completed',
+  'job_explorer_clicked',
+  'prompt_copied',
 ] as const;
 
 export type SupportedUxEvent = (typeof SUPPORTED_UX_EVENTS)[number];

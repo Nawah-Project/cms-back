@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   ApplicationOutcome,
@@ -31,6 +32,9 @@ import {
   TrackUxEventDto,
   UpdateUxConfigDto,
 } from './dto/track-ux-event.dto';
+import { AdminNotificationsService } from './notifications/admin-notifications.service';
+import { NoResponseProcessor } from '../applications/no-response.processor';
+import { ProfileService } from '../profile/profile.service';
 
 type ActivityItem = {
   id: string;
@@ -102,6 +106,9 @@ export class AdminService {
     private readonly prisma: PrismaService,
     private readonly groupAssignment: GroupAssignmentService,
     private readonly uxAnalytics: UxAnalyticsService,
+    @Optional() private readonly adminNotifications?: AdminNotificationsService,
+    @Optional() private readonly noResponseProcessor?: NoResponseProcessor,
+    @Optional() private readonly profileService?: ProfileService,
   ) {}
 
   private boundedLimit(value?: number): number {
@@ -936,5 +943,395 @@ export class AdminService {
 
   recordUxEvent(userId: string, dto: TrackUxEventDto) {
     return this.uxAnalytics.recordEvent(userId, dto);
+  }
+
+  async getGranularFunnel() {
+    const rows = await this.prisma.$queryRaw<MemberRow[]>(Prisma.sql`
+      ${this.memberRowsCte()}
+      ${this.memberRowsSelect()}
+      ORDER BY c.last_at DESC NULLS LAST, c.name ASC
+    `);
+
+    const stageDefinitions = [
+      {
+        code: 'ONBOARDING_INCOMPLETE',
+        titleAr: 'سجل حساباً ولم يكمل التهيئة',
+        titleEn: 'Onboarding Incomplete',
+        descriptionAr: 'أنشأ حساباً ولكن لم يرفع سيرته الذاتية أو يكمل بياناته',
+        descriptionEn: 'Account created but CV or profile details missing',
+      },
+      {
+        code: 'ONBOARDING_DONE_ZERO_APPS',
+        titleAr: 'أكمل التهيئة ولم يبدأ أول طلب (0 طلبات)',
+        titleEn: 'Onboarding Done (0 Applications)',
+        descriptionAr: 'بياناته جاهزة وسيرته الذاتية مرفوعة ولكنه لم يسجل أي تقديم',
+        descriptionEn: 'Profile is complete but has not submitted any job application',
+      },
+      {
+        code: 'TASK_0_STALLED_1_4_APPS',
+        titleAr: 'بدأ المهمة 0 وعالق قبل إتمامها (1-4 طلبات)',
+        titleEn: 'Task 0 In-Progress (1-4 Applications)',
+        descriptionAr: 'بدأ التقديم ولكن لم يكمل الحد الأدنى للمهمة صفر (5 طلبات)',
+        descriptionEn: 'Started Task 0 but stuck before reaching the 5-application milestone',
+      },
+      {
+        code: 'WEEK_1',
+        titleAr: 'الأسبوع 1: التقديم المكثف والأسيمنت',
+        titleEn: 'Week 1: Active Submissions',
+        descriptionAr: 'اجتاز المهمة صفر ويعمل على مهام ومحطات الأسبوع الأول',
+        descriptionEn: 'Completed Task 0, currently in Week 1 milestones',
+      },
+      {
+        code: 'WEEK_2',
+        titleAr: 'الأسبوع 2: التقديم المخصص والمحتوى',
+        titleEn: 'Week 2: Customization & Branding',
+        descriptionAr: 'يعمل على مهام التقديم المخصص واليوم السابع في الأسبوع الثاني',
+        descriptionEn: 'Working on tailored applications and Week 2 content',
+      },
+      {
+        code: 'WEEK_3',
+        titleAr: 'الأسبوع 3: إدارة الوقت وبناء العلاقات',
+        titleEn: 'Week 3: Time & Networking',
+        descriptionAr: 'وصل إلى مرحلة التوسع وشبكة العلاقات وإدارة الوقت',
+        descriptionEn: 'Focused on time management and outreach networking',
+      },
+      {
+        code: 'WEEK_4',
+        titleAr: 'الأسبوع 4: التخطيط المهني المستمر',
+        titleEn: 'Week 4: Career Planning',
+        descriptionAr: 'المرحلة الختامية للرحلة ووضع استراتيجية الاستدامة المهنية',
+        descriptionEn: 'Final sprint of the 30-day journey',
+      },
+      {
+        code: 'JOURNEY_COMPLETED',
+        titleAr: 'أتم رحلة الـ 30 يوماً بنجاح',
+        titleEn: 'Journey Completed',
+        descriptionAr: 'أكمل كافة محطات الرحلة والتقرير النهائي',
+        descriptionEn: 'Finished all journey nodes and final report',
+      },
+    ];
+
+    const totalUsers = rows.length || 1;
+    const stageMap: Record<
+      string,
+      {
+        code: string;
+        titleAr: string;
+        titleEn: string;
+        descriptionAr: string;
+        descriptionEn: string;
+        count: number;
+        percent: number;
+        stuckUsers: Array<{
+          id: string;
+          name: string;
+          email: string | null;
+          groupName: string | null;
+          daysAtStage: number;
+          applicationsCount: number;
+        }>;
+      }
+    > = {};
+
+    for (const def of stageDefinitions) {
+      stageMap[def.code] = {
+        ...def,
+        count: 0,
+        percent: 0,
+        stuckUsers: [],
+      };
+    }
+
+    for (const m of rows) {
+      let stageCode = 'JOURNEY_COMPLETED';
+      if (!m.profileComplete) {
+        stageCode = 'ONBOARDING_INCOMPLETE';
+      } else if (Number(m.applicationsCount || 0) === 0) {
+        stageCode = 'ONBOARDING_DONE_ZERO_APPS';
+      } else if (
+        m.journeyNodeCode === 'TASK_0' &&
+        Number(m.applicationsCount || 0) < 5
+      ) {
+        stageCode = 'TASK_0_STALLED_1_4_APPS';
+      } else if (m.journeyWeek === 1) {
+        stageCode = 'WEEK_1';
+      } else if (m.journeyWeek === 2) {
+        stageCode = 'WEEK_2';
+      } else if (m.journeyWeek === 3) {
+        stageCode = 'WEEK_3';
+      } else if (m.journeyWeek === 4) {
+        stageCode = 'WEEK_4';
+      } else if (
+        m.journeyNodeCode === 'FINAL_REPORT' ||
+        (m.journeyCompletedNodes ?? 0) >= 15
+      ) {
+        stageCode = 'JOURNEY_COMPLETED';
+      } else {
+        stageCode = 'WEEK_1';
+      }
+
+      const stage = stageMap[stageCode];
+      if (stage) {
+        stage.count += 1;
+        stage.stuckUsers.push({
+          id: m.id,
+          name: m.name,
+          email: m.email ?? null,
+          groupName: m.groupName ?? null,
+          daysAtStage: m.journeyDaysInNode ?? m.inactivityDays ?? 0,
+          applicationsCount: Number(m.applicationsCount || 0),
+        });
+      }
+    }
+
+    for (const stage of Object.values(stageMap)) {
+      stage.percent = Math.round((stage.count / totalUsers) * 100);
+      stage.stuckUsers.sort((a, b) => b.daysAtStage - a.daysAtStage);
+    }
+
+    const candidatesForBottleneck = stageDefinitions
+      .filter((s) => s.code !== 'JOURNEY_COMPLETED')
+      .map((s) => stageMap[s.code]);
+
+    let topBottleneck = candidatesForBottleneck[0];
+    for (const c of candidatesForBottleneck) {
+      if (c && c.count > (topBottleneck?.count ?? 0)) {
+        topBottleneck = c;
+      }
+    }
+
+    const [
+      tourEvents,
+      jobExplorerEvents,
+      promptEvents,
+      plotGuidanceReads,
+      totalPlotPosts,
+    ] = await Promise.all([
+      this.prisma.domainEventLog.count({
+        where: { eventName: 'ux.tour_completed' },
+      }),
+      this.prisma.domainEventLog.findMany({
+        where: { eventName: 'ux.job_explorer_clicked' },
+        select: { payload: true },
+        take: 500,
+      }),
+      this.prisma.domainEventLog.count({
+        where: { eventName: 'ux.prompt_copied' },
+      }),
+      this.prisma.feedbackRead.count({
+        where: {
+          feedback: { unlockTriggerCode: { not: null } },
+        },
+      }),
+      this.prisma.feedbackPost.count({
+        where: { unlockTriggerCode: { not: null }, archivedAt: null },
+      }),
+    ]);
+
+    const platformCounts: Record<string, number> = {};
+    for (const ev of jobExplorerEvents) {
+      const p =
+        (ev.payload as Record<string, any>)?.platform ||
+        (ev.payload as Record<string, any>)?.name;
+      if (typeof p === 'string' && p.trim()) {
+        platformCounts[p] = (platformCounts[p] || 0) + 1;
+      }
+    }
+    const topPlatforms = Object.entries(platformCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([name, clicks]) => ({ name, clicks }));
+
+    return {
+      stages: stageDefinitions.map((def) => ({
+        ...stageMap[def.code],
+        isTopBottleneck: def.code === topBottleneck?.code,
+      })),
+      topBottleneck: topBottleneck
+        ? {
+            code: topBottleneck.code,
+            titleAr: topBottleneck.titleAr,
+            titleEn: topBottleneck.titleEn,
+            count: topBottleneck.count,
+            percent: topBottleneck.percent,
+            stuckUsers: topBottleneck.stuckUsers.slice(0, 10),
+          }
+        : null,
+      totalUsers: rows.length,
+      adoptionMetrics: {
+        tourCompletedCount: tourEvents,
+        tourCompletionRate: Math.min(
+          100,
+          Math.round((tourEvents / Math.max(1, rows.length)) * 100),
+        ),
+        jobExplorerClicksCount: jobExplorerEvents.length,
+        topPlatforms,
+        plotGuidanceReadsCount: plotGuidanceReads,
+        plotGuidancePostsCount: totalPlotPosts,
+        promptCopiesCount: promptEvents,
+      },
+    };
+  }
+
+  async getOperationsStats() {
+    const sixDaysAgo = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000);
+
+    const [
+      notifStats,
+      totalNotifications,
+      unreadNotifications,
+      recentEmailLogs,
+      autoClosedCount,
+      candidatesNext24h,
+      activeCvCount,
+      cvHistoryCount,
+      activeCvSizeSum,
+      cvHistorySizeSum,
+      domainEventsCount,
+    ] = await Promise.all([
+      this.adminNotifications?.getStats() ?? null,
+      this.prisma.notification.count(),
+      this.prisma.notification.count({ where: { readAt: null } }),
+      this.prisma.emailDeliveryLog.findMany({
+        take: 6,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          user: {
+            select: { id: true, name: true, email: true },
+          },
+        },
+      }),
+      this.prisma.application.count({
+        where: {
+          stage: ApplicationStage.CLOSED,
+          outcome: ApplicationOutcome.NO_RESPONSE,
+        },
+      }),
+      this.prisma.application.count({
+        where: {
+          stage: { not: ApplicationStage.CLOSED },
+          outcome: ApplicationOutcome.NONE,
+          createdAt: { lte: sixDaysAgo },
+        },
+      }),
+      this.prisma.userCv.count(),
+      this.prisma.userCvHistory.count(),
+      this.prisma.userCv.aggregate({ _sum: { size: true } }),
+      this.prisma.userCvHistory.aggregate({ _sum: { size: true } }),
+      this.prisma.domainEventLog.count(),
+    ]);
+
+    const startPing = Date.now();
+    await this.prisma.$queryRaw`SELECT 1`;
+    const latencyMs = Date.now() - startPing;
+
+    const totalFiles = activeCvCount + cvHistoryCount;
+    const totalBytes =
+      (activeCvSizeSum._sum.size ?? 0) + (cvHistorySizeSum._sum.size ?? 0);
+    const totalMegabytes = Number((totalBytes / (1024 * 1024)).toFixed(2));
+    const limitMegabytes = 500;
+    const storagePercent = Math.min(
+      100,
+      Number(((totalMegabytes / limitMegabytes) * 100).toFixed(1)),
+    );
+
+    const readNotifications = Math.max(0, totalNotifications - unreadNotifications);
+    const notificationsReadRate =
+      totalNotifications > 0
+        ? Math.round((readNotifications / totalNotifications) * 100)
+        : 100;
+
+    return {
+      notifications: {
+        daily: notifStats?.daily ?? {
+          sent: 0,
+          limit: 100,
+          remaining: 100,
+          percentUsed: 0,
+          otpSafeReserve: 15,
+          safeAvailableForBulk: 85,
+        },
+        monthly: notifStats?.monthly ?? {
+          sent: 0,
+          limit: 3000,
+          remaining: 3000,
+          percentUsed: 0,
+        },
+        smtp: notifStats?.smtp ?? {
+          configured: false,
+          active: false,
+        },
+        stats: {
+          totalNotifications,
+          unreadNotifications,
+          readNotifications,
+          readRate: notificationsReadRate,
+        },
+        recentLogs: recentEmailLogs.map((l) => ({
+          id: l.id,
+          type: l.type,
+          recipientEmail: l.recipientEmail,
+          recipientName: l.recipientName || l.user?.name || null,
+          subject: l.subject,
+          status: l.status,
+          errorMessage: l.errorMessage,
+          channel: l.channel,
+          createdAt: l.createdAt.toISOString(),
+        })),
+      },
+      noResponseProcessor: {
+        status: 'ACTIVE',
+        interval: 'Every 15 minutes',
+        autoClosedCount,
+        candidatesNext24h,
+      },
+      storage: {
+        activeCvCount,
+        cvHistoryCount,
+        totalFiles,
+        totalBytes,
+        totalMegabytes,
+        limitMegabytes,
+        percentUsed: storagePercent,
+      },
+      systemHealth: {
+        dbStatus: 'CONNECTED',
+        dbLatencyMs: latencyMs,
+        domainEventsCount,
+        rateLimiter: {
+          limit: 120,
+          ttlSeconds: 60,
+          status: 'ACTIVE',
+        },
+      },
+    };
+  }
+
+  async runNoResponseProcessor() {
+    if (!this.noResponseProcessor) {
+      throw new NotFoundException('NoResponseProcessor not configured');
+    }
+    const closed = await this.noResponseProcessor.runOnce();
+    return {
+      success: true,
+      closedCount: closed,
+      timestamp: new Date().toISOString(),
+      message: `تم فحص وإغلاق ${closed} من الطلبات غير المستجابة.`,
+    };
+  }
+
+  async cleanupOrphanedFiles() {
+    if (!this.profileService) {
+      throw new NotFoundException('ProfileService not configured');
+    }
+    const result = await this.profileService.cleanupOrphanedFiles();
+    return {
+      success: true,
+      deletedCount: result.deletedCount,
+      freedBytes: result.freedBytes,
+      freedMegabytes: Number((result.freedBytes / (1024 * 1024)).toFixed(2)),
+      timestamp: new Date().toISOString(),
+      message: `تم تنظيف ${result.deletedCount} ملفات يتيمة وتحرير ${(result.freedBytes / (1024 * 1024)).toFixed(2)} ميغابايت.`,
+    };
   }
 }

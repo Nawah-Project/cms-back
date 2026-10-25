@@ -80,4 +80,24 @@ export class AdminController {
   updateUxConfig(@Body() dto: UpdateUxConfigDto) {
     return this.admin.updateUxConfig(dto);
   }
+
+  @Get('monitoring/granular-funnel')
+  getGranularFunnel() {
+    return this.admin.getGranularFunnel();
+  }
+
+  @Get('operations/stats')
+  getOperationsStats() {
+    return this.admin.getOperationsStats();
+  }
+
+  @Post('operations/run-no-response-processor')
+  runNoResponseProcessor() {
+    return this.admin.runNoResponseProcessor();
+  }
+
+  @Post('operations/cleanup-orphaned-files')
+  cleanupOrphanedFiles() {
+    return this.admin.cleanupOrphanedFiles();
+  }
 }

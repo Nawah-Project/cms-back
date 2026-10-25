@@ -63,7 +63,7 @@ export class ProfileService
     if (this.cleanupTimer) clearInterval(this.cleanupTimer);
   }
 
-  async cleanupOrphanedFiles(): Promise<void> {
+  async cleanupOrphanedFiles(): Promise<{ deletedCount: number; freedBytes: number }> {
     let files: Dirent[];
     try {
       files = await readdir(this.storageDir, { withFileTypes: true });
@@ -73,8 +73,11 @@ export class ProfileService
           'Unable to scan private CV storage for orphaned files',
         );
       }
-      return;
+      return { deletedCount: 0, freedBytes: 0 };
     }
+
+    let deletedCount = 0;
+    let freedBytes = 0;
 
     try {
       const activeUserCvs = await this.prisma.userCv.findMany({
@@ -97,14 +100,24 @@ export class ProfileService
               !activeFiles.has(file.name),
           )
           .map(async (file) => {
-            const filePath = join(this.storageDir, file.name);
-            const fileInfo = await stat(filePath);
-            if (fileInfo.mtimeMs < staleBefore) await unlink(filePath);
+            try {
+              const filePath = join(this.storageDir, file.name);
+              const fileInfo = await stat(filePath);
+              if (fileInfo.mtimeMs < staleBefore) {
+                await unlink(filePath);
+                deletedCount += 1;
+                freedBytes += fileInfo.size;
+              }
+            } catch {
+              // Ignore single file unlink error
+            }
           }),
       );
     } catch {
       this.logger.warn('Unable to finish scanning private CV storage');
     }
+
+    return { deletedCount, freedBytes };
   }
 
   async getProfile(userId: string) {

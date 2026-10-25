@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { GroupsModule } from '../members/groups.module';
+import { ApplicationsModule } from '../applications/applications.module';
+import { ProfileModule } from '../profile/profile.module';
 import { AdminController } from './admin.controller';
 import { AdminGuard } from './admin.guard';
 import { AdminService } from './admin.service';
@@ -11,7 +13,13 @@ import { AdminNotificationsController } from './notifications/admin-notification
 import { AdminNotificationsService } from './notifications/admin-notifications.service';
 
 @Module({
-  imports: [AuthModule, GroupsModule, PrismaModule],
+  imports: [
+    AuthModule,
+    GroupsModule,
+    PrismaModule,
+    ApplicationsModule,
+    ProfileModule,
+  ],
   controllers: [
     AdminController,
     UxAnalyticsController,
@@ -23,6 +31,6 @@ import { AdminNotificationsService } from './notifications/admin-notifications.s
     UxAnalyticsService,
     AdminNotificationsService,
   ],
-  exports: [UxAnalyticsService, AdminNotificationsService],
+  exports: [UxAnalyticsService, AdminNotificationsService, AdminService],
 })
 export class AdminModule {}

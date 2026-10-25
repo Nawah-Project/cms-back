@@ -8,6 +8,6 @@ import { NoResponseProcessor } from './no-response.processor';
   imports: [AuthModule],
   controllers: [ApplicationsController],
   providers: [ApplicationsService, NoResponseProcessor],
-  exports: [ApplicationsService],
+  exports: [ApplicationsService, NoResponseProcessor],
 })
 export class ApplicationsModule {}

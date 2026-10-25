@@ -98,6 +98,11 @@ export class AdminController {
     return this.admin.getUxLabOverview();
   }
 
+  @Get('ux-lab/event-trends')
+  getUxEventTrends(@Query('days') days?: string) {
+    return this.admin.getUxEventTrends(Number(days) || 30);
+  }
+
   @Get('monitoring/ux-lab-overview')
   getUxLabOverviewAlias() {
     return this.admin.getUxLabOverview();

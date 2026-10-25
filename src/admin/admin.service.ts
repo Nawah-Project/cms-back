@@ -31,6 +31,7 @@ import { ActivityState, getActivityState } from './activity-status.util';
 import { MonitoringQueryDto } from './dto/monitoring-query.dto';
 import { UxAnalyticsService } from './ux-analytics.service';
 import {
+  SUPPORTED_UX_EVENTS,
   TrackUxEventDto,
   UpdateUxConfigDto,
 } from './dto/track-ux-event.dto';
@@ -998,6 +999,61 @@ export class AdminService {
     return this.uxAnalytics.recordEvent(userId, dto);
   }
 
+  async getUxEventTrends(requestedDays = 30) {
+    const days = [7, 30, 90].includes(requestedDays) ? requestedDays : 30;
+    const eventNames = SUPPORTED_UX_EVENTS.map((event) => `ux.${event}`);
+    const conditions = Prisma.sql`
+      "eventName" IN (${Prisma.join(eventNames)})
+      AND "actorId" IS NOT NULL
+      AND "createdAt" >= NOW() - (${days} * INTERVAL '1 day')
+    `;
+
+    const [dailyRows, eventRows, [summary]] = await Promise.all([
+      this.prisma.$queryRaw<Array<{
+        date: string;
+        eventCount: number;
+        activeUsers: number;
+      }>>(Prisma.sql`
+        SELECT to_char("createdAt", 'YYYY-MM-DD') AS date,
+          COUNT(*)::int AS "eventCount",
+          COUNT(DISTINCT "actorId")::int AS "activeUsers"
+        FROM domain_event_logs
+        WHERE ${conditions}
+        GROUP BY to_char("createdAt", 'YYYY-MM-DD')
+        ORDER BY date ASC
+      `),
+      this.prisma.$queryRaw<Array<{
+        eventName: string;
+        eventCount: number;
+        uniqueUsers: number;
+      }>>(Prisma.sql`
+        SELECT "eventName",
+          COUNT(*)::int AS "eventCount",
+          COUNT(DISTINCT "actorId")::int AS "uniqueUsers"
+        FROM domain_event_logs
+        WHERE ${conditions}
+        GROUP BY "eventName"
+        ORDER BY "eventCount" DESC, "eventName" ASC
+      `),
+      this.prisma.$queryRaw<Array<{ eventCount: number; uniqueUsers: number }>>(
+        Prisma.sql`
+          SELECT COUNT(*)::int AS "eventCount",
+            COUNT(DISTINCT "actorId")::int AS "uniqueUsers"
+          FROM domain_event_logs
+          WHERE ${conditions}
+        `,
+      ),
+    ]);
+
+    return {
+      days,
+      totalEvents: summary?.eventCount ?? 0,
+      uniqueUsers: summary?.uniqueUsers ?? 0,
+      daily: dailyRows,
+      eventBreakdown: eventRows,
+    };
+  }
+
   async getGranularFunnel() {
     const rows = await this.prisma.$queryRaw<MemberRow[]>(Prisma.sql`
       ${this.memberRowsCte()}
@@ -1717,6 +1773,7 @@ export class AdminService {
       config,
       tourCompletedEvents,
       plotGuidanceReads,
+      plotGuidanceReaderRows,
       promptCopiesCount,
       sideTasksCount,
       platformAppsCount,
@@ -1745,6 +1802,11 @@ export class AdminService {
       this.prisma.feedbackRead.count({
         where: { feedback: { unlockTriggerCode: { not: null } } },
       }),
+      this.prisma.feedbackRead.findMany({
+        where: { feedback: { unlockTriggerCode: { not: null } } },
+        select: { userId: true },
+        distinct: ['userId'],
+      }),
       this.prisma.domainEventLog.count({
         where: { eventName: 'ux.prompt_copied' },
       }),
@@ -1766,7 +1828,7 @@ export class AdminService {
       }),
     ]);
 
-    const totalUsers = rows.length || 1;
+    const totalUsers = rows.length;
 
     // 1. UX Telemetry Ribbon metrics
     const activatedUsers = rows.filter(
@@ -1842,6 +1904,10 @@ export class AdminService {
       }
     }
 
+    const guidanceReaders = new Set(
+      plotGuidanceReaderRows.map((read) => read.userId),
+    );
+
     const buildScorecard = (variant: 'A' | 'B' | 'C') => {
       const users = variantUsersMap[variant];
       const uCount = users.length;
@@ -1851,8 +1917,9 @@ export class AdminService {
           onboardingRate: 0,
           task0CompletionRate: 0,
           avgAppsPerUser: 0,
+          guidanceReadUsersCount: 0,
           guidanceReadRate: 0,
-          activeRetentionRate: 0,
+          activeLast3DaysRate: 0,
         };
       }
       const onboardingCompleted = users.filter((u) => u.profileComplete).length;
@@ -1868,20 +1935,16 @@ export class AdminService {
       const activeRecent = users.filter(
         (u) => u.inactivityDays !== null && u.inactivityDays <= 3,
       ).length;
-      const guidanceUsers = users.filter(
-        (u) => Number(u.applicationsCount || 0) >= 1 && u.profileComplete,
-      ).length;
+      const guidanceUsers = users.filter((u) => guidanceReaders.has(u.id)).length;
 
       return {
         usersCount: uCount,
         onboardingRate: Math.round((onboardingCompleted / uCount) * 100),
         task0CompletionRate: Math.round((task0Completed / uCount) * 100),
         avgAppsPerUser: Number((totalApps / uCount).toFixed(1)),
-        guidanceReadRate: Math.min(
-          100,
-          Math.round((guidanceUsers / uCount) * 85),
-        ),
-        activeRetentionRate: Math.round((activeRecent / uCount) * 100),
+        guidanceReadUsersCount: guidanceUsers,
+        guidanceReadRate: Math.round((guidanceUsers / uCount) * 100),
+        activeLast3DaysRate: Math.round((activeRecent / uCount) * 100),
       };
     };
 
@@ -1891,66 +1954,75 @@ export class AdminService {
       C: buildScorecard('C'),
     };
 
-    const scoreA =
-      scorecard.A.task0CompletionRate * 0.4 +
-      scorecard.A.activeRetentionRate * 0.3 +
-      scorecard.A.onboardingRate * 0.3;
-    const scoreB =
-      scorecard.B.task0CompletionRate * 0.4 +
-      scorecard.B.activeRetentionRate * 0.3 +
-      scorecard.B.onboardingRate * 0.3;
-    const scoreC =
-      scorecard.C.task0CompletionRate * 0.4 +
-      scorecard.C.activeRetentionRate * 0.3 +
-      scorecard.C.onboardingRate * 0.3;
-
-    let winnerVariant: 'A' | 'B' | 'C' = 'B';
-    if (scoreA > scoreB && scoreA > scoreC) winnerVariant = 'A';
-    else if (scoreC > scoreB && scoreC > scoreA) winnerVariant = 'C';
+    const performanceScore = (metrics: (typeof scorecard)['A']) =>
+      metrics.task0CompletionRate * 0.4 +
+      metrics.activeLast3DaysRate * 0.3 +
+      metrics.onboardingRate * 0.3;
+    const winnerVariant = (['A', 'B', 'C'] as const)
+      .filter((variant) => scorecard[variant].usersCount > 0)
+      .sort(
+        (left, right) =>
+          performanceScore(scorecard[right]) - performanceScore(scorecard[left]),
+      )[0] ?? null;
 
     // 3. Automated Insights
-    const automatedInsights = [
-      {
+    const automatedInsights: Array<{
+      id: string;
+      type: 'BOTTLENECK' | 'WINNER_VARIANT' | 'EXPLORER';
+      titleAr: string;
+      titleEn: string;
+      descriptionAr: string;
+      descriptionEn: string;
+      metric: string;
+      tone: 'warning' | 'success' | 'info';
+    }> = [];
+
+    if (totalUsers > 0) {
+      automatedInsights.push({
         id: 'insight-1',
-        type: 'BOTTLENECK' as const,
+        type: 'BOTTLENECK',
         titleAr: `أكبر عنق زجاجة: ${primaryFrictionData.titleAr}`,
         titleEn: `Primary Bottleneck: ${primaryFrictionData.titleEn}`,
-        descriptionAr: `يقف عند هذه المحطة ${primaryFrictionData.count} عضو (${Math.round((primaryFrictionData.count / totalUsers) * 100)}% من الإجمالي) بمتوسط انتظار ${Math.round(primaryFrictionData.totalDays / Math.max(1, primaryFrictionData.count))} يوم. التدخل التوجيهي مطلوب هنا.`,
-        descriptionEn: `${primaryFrictionData.count} members (${Math.round((primaryFrictionData.count / totalUsers) * 100)}%) are currently stalled at this node with avg ${Math.round(primaryFrictionData.totalDays / Math.max(1, primaryFrictionData.count))} days waiting.`,
+        descriptionAr: `يقف عند هذه المحطة ${primaryFrictionData.count} عضو (${Math.round((primaryFrictionData.count / Math.max(1, totalUsers)) * 100)}% من الإجمالي) بمتوسط انتظار ${Math.round(primaryFrictionData.totalDays / Math.max(1, primaryFrictionData.count))} يوم. التدخل التوجيهي مطلوب هنا.`,
+        descriptionEn: `${primaryFrictionData.count} members (${Math.round((primaryFrictionData.count / Math.max(1, totalUsers)) * 100)}%) are currently stalled at this node with avg ${Math.round(primaryFrictionData.totalDays / Math.max(1, primaryFrictionData.count))} days waiting.`,
         metric: `${primaryFrictionData.count} عضو`,
-        tone: 'warning' as const,
-      },
-      {
+        tone: 'warning',
+      });
+    }
+
+    if (winnerVariant) {
+      automatedInsights.push({
         id: 'insight-2',
-        type: 'WINNER_VARIANT' as const,
-        titleAr: `النسخة ${winnerVariant} تتصدر مؤشرات الأداء والتحويل`,
-        titleEn: `Variant ${winnerVariant} is Leading Behavioral Conversion`,
-        descriptionAr: `حققت النسخة ${winnerVariant} أعلى معدل اجتياز للمهمة 0 بنسبة ${scorecard[winnerVariant].task0CompletionRate}% ومعدل نشاط ${scorecard[winnerVariant].activeRetentionRate}% مقارنة بباقي النسخ.`,
-        descriptionEn: `Variant ${winnerVariant} achieved the highest Task 0 conversion at ${scorecard[winnerVariant].task0CompletionRate}% and ${scorecard[winnerVariant].activeRetentionRate}% active retention.`,
-        metric: `${scorecard[winnerVariant].task0CompletionRate}% تحويل`,
-        tone: 'success' as const,
-      },
-      {
+        type: 'WINNER_VARIANT',
+        titleAr: `النسخة ${winnerVariant} تتقدم في المؤشر المركب الحالي`,
+        titleEn: `Variant ${winnerVariant} leads the current composite score`,
+        descriptionAr: `هذه مقارنة وصفية للأعضاء المعيّنين للنسخ، وليست دليلاً سببياً. عينة النسخة ${winnerVariant}: ${scorecard[winnerVariant].usersCount} عضو؛ إكمال المهمة صفر ${scorecard[winnerVariant].task0CompletionRate}%، والنشاط خلال آخر 3 أيام ${scorecard[winnerVariant].activeLast3DaysRate}%.`,
+        descriptionEn: `This is a descriptive comparison of assigned members, not causal evidence. Variant ${winnerVariant} sample: ${scorecard[winnerVariant].usersCount}; Task 0 completion ${scorecard[winnerVariant].task0CompletionRate}%; active in the last 3 days ${scorecard[winnerVariant].activeLast3DaysRate}%.`,
+        metric: `${scorecard[winnerVariant].task0CompletionRate}% Task 0`,
+        tone: 'info',
+      });
+    }
+
+    automatedInsights.push({
         id: 'insight-3',
-        type: 'EXPLORER' as const,
+        type: 'EXPLORER',
         titleAr: 'تفاعل ملحوظ مع مستكشف الوظائف والتخصيص',
         titleEn: 'Strong Adoption of Job Market Explorer',
         descriptionAr: `سُجل ${platformAppsCount} طلب تقديم مع روابط المنصات، ما يعكس تبني ميزة استكشاف الفرص وربطها بالـ ATS.`,
         descriptionEn: `${platformAppsCount} applications registered with platform links and tailored metadata.`,
         metric: `${platformAppsCount} تقديم`,
-        tone: 'info' as const,
-      },
-    ];
+        tone: 'info',
+      });
 
     return {
       ribbon: {
         activationRate: {
-          percent: Math.round((activatedUsers / totalUsers) * 100),
+          percent: Math.round((activatedUsers / Math.max(1, totalUsers)) * 100),
           count: activatedUsers,
           total: totalUsers,
         },
         task0Conversion: {
-          percent: Math.round((task0Users / totalUsers) * 100),
+          percent: Math.round((task0Users / Math.max(1, totalUsers)) * 100),
           count: task0Users,
           total: totalUsers,
         },
@@ -1967,7 +2039,7 @@ export class AdminService {
           titleAr: primaryFrictionData.titleAr,
           titleEn: primaryFrictionData.titleEn,
           count: primaryFrictionData.count,
-          percent: Math.round((primaryFrictionData.count / totalUsers) * 100),
+          percent: Math.round((primaryFrictionData.count / Math.max(1, totalUsers)) * 100),
           daysStalledAvg: Math.round(
             primaryFrictionData.totalDays / Math.max(1, primaryFrictionData.count),
           ),

@@ -1266,5 +1266,202 @@ export class JourneyEngineService implements OnModuleInit {
       },
     });
   }
+
+  async getAdminPlotGuidance() {
+    const dbPosts = await this.prisma.feedbackPost.findMany({
+      where: { unlockTriggerCode: { not: null }, archivedAt: null },
+      include: {
+        reads: true,
+      },
+    });
+
+    const dbPostsByCode = new Map<string, (typeof dbPosts)[0]>();
+    for (const post of dbPosts) {
+      if (post.unlockTriggerCode) {
+        dbPostsByCode.set(post.unlockTriggerCode, post);
+      }
+    }
+
+    const userStates = await this.prisma.userJourneyState.findMany({
+      select: {
+        userId: true,
+        currentWeek: true,
+        currentNodeCode: true,
+        completedNodeCodes: true,
+        unlockedInsightCodes: true,
+      },
+    });
+
+    const totalMembers = userStates.length || 1;
+
+    const items = JOURNEY_GUIDANCE_CATALOG.map((seed) => {
+      const dbPost = dbPostsByCode.get(seed.code);
+
+      const unlockedUsers = userStates.filter((u) => {
+        if (u.unlockedInsightCodes.includes(seed.code)) return true;
+        if (seed.code === 'INSIGHT_TASK_0_CV_BASE') return true;
+        if (seed.weekNumber <= u.currentWeek) return true;
+        return false;
+      });
+
+      const unlockedCount = unlockedUsers.length;
+      const readsCount = dbPost?.reads?.length ?? 0;
+
+      return {
+        id: dbPost?.id ?? `catalog-${seed.code}`,
+        code: seed.code,
+        unlockTriggerCode: seed.code,
+        weekNumber: seed.weekNumber,
+        isAdvanced: seed.isAdvanced ?? false,
+        title: dbPost?.title ?? seed.titleAr,
+        titleAr: seed.titleAr,
+        titleEn: seed.titleEn,
+        content: dbPost?.content ?? seed.summaryAr,
+        summaryAr: seed.summaryAr,
+        summaryEn: seed.summaryEn,
+        promptTemplate: dbPost?.promptTemplate ?? seed.promptTemplateAr,
+        promptTemplateAr: seed.promptTemplateAr,
+        promptTemplateEn: seed.promptTemplateEn,
+        tierLevel: dbPost?.tierLevel ?? (seed.isAdvanced ? 'ADVANCED' : 'BASIC'),
+        unlockedCount,
+        readsCount,
+        unlockedPercent: Math.round((unlockedCount / totalMembers) * 100),
+        readPercent: unlockedCount > 0 ? Math.round((readsCount / unlockedCount) * 100) : 0,
+        isCustomized: Boolean(dbPost),
+        updatedAt: dbPost?.updatedAt?.toISOString() ?? null,
+      };
+    });
+
+    // Also include any custom FeedbackPost with unlockTriggerCode not in seed catalog
+    for (const post of dbPosts) {
+      if (
+        post.unlockTriggerCode &&
+        !JOURNEY_GUIDANCE_CATALOG.some((s) => s.code === post.unlockTriggerCode)
+      ) {
+        items.push({
+          id: post.id,
+          code: post.unlockTriggerCode,
+          unlockTriggerCode: post.unlockTriggerCode,
+          weekNumber: 1,
+          isAdvanced: post.tierLevel === 'ADVANCED',
+          title: post.title,
+          titleAr: post.title,
+          titleEn: post.title,
+          content: post.content,
+          summaryAr: post.content,
+          summaryEn: post.content,
+          promptTemplate: post.promptTemplate || '',
+          promptTemplateAr: post.promptTemplate || '',
+          promptTemplateEn: post.promptTemplate || '',
+          tierLevel: post.tierLevel || 'BASIC',
+          unlockedCount: totalMembers,
+          readsCount: post.reads?.length ?? 0,
+          unlockedPercent: 100,
+          readPercent: Math.round(((post.reads?.length ?? 0) / totalMembers) * 100),
+          isCustomized: true,
+          updatedAt: post.updatedAt.toISOString(),
+        });
+      }
+    }
+
+    return items;
+  }
+
+  async updateAdminPlotGuidance(
+    code: string,
+    dto: {
+      title?: string;
+      content?: string;
+      promptTemplate?: string;
+      tierLevel?: string;
+    },
+    authorId: string,
+  ) {
+    const existing = await this.prisma.feedbackPost.findFirst({
+      where: { unlockTriggerCode: code, archivedAt: null },
+    });
+
+    const seed = JOURNEY_GUIDANCE_CATALOG.find((s) => s.code === code);
+
+    if (existing) {
+      return this.prisma.feedbackPost.update({
+        where: { id: existing.id },
+        data: {
+          ...(dto.title !== undefined ? { title: dto.title.trim() } : {}),
+          ...(dto.content !== undefined ? { content: dto.content.trim() } : {}),
+          ...(dto.promptTemplate !== undefined
+            ? { promptTemplate: dto.promptTemplate.trim() }
+            : {}),
+          ...(dto.tierLevel !== undefined ? { tierLevel: dto.tierLevel } : {}),
+        },
+      });
+    }
+
+    return this.prisma.feedbackPost.create({
+      data: {
+        authorId,
+        title: dto.title?.trim() || seed?.titleAr || code,
+        content: dto.content?.trim() || seed?.summaryAr || '',
+        promptTemplate:
+          dto.promptTemplate?.trim() || seed?.promptTemplateAr || '',
+        visibility: 'ALL',
+        context: 'GENERAL',
+        unlockTriggerCode: code,
+        tierLevel: dto.tierLevel || (seed?.isAdvanced ? 'ADVANCED' : 'BASIC'),
+      },
+    });
+  }
+
+  async createAdminPlotGuidance(
+    dto: {
+      code: string;
+      title: string;
+      content: string;
+      promptTemplate?: string;
+      tierLevel?: string;
+    },
+    authorId: string,
+  ) {
+    return this.prisma.feedbackPost.create({
+      data: {
+        authorId,
+        title: dto.title.trim(),
+        content: dto.content.trim(),
+        promptTemplate: dto.promptTemplate?.trim() || null,
+        visibility: 'ALL',
+        context: 'GENERAL',
+        unlockTriggerCode: dto.code.trim(),
+        tierLevel: dto.tierLevel || 'BASIC',
+      },
+    });
+  }
+
+  async overrideUserJourneyNode(userId: string, nodeCode: string) {
+    const node = await this.prisma.journeyNode.findUnique({
+      where: { code: nodeCode },
+    });
+    if (!node) {
+      throw new NotFoundException(`Node with code "${nodeCode}" not found`);
+    }
+
+    return this.prisma.userJourneyState.upsert({
+      where: { userId },
+      update: {
+        currentNodeCode: nodeCode,
+        currentWeek: node.weekNumber,
+        currentNodeStartedAt: new Date(),
+        isGroupUnlocked: node.weekNumber >= 1,
+        canUseTableView: node.weekNumber >= 1,
+      },
+      create: {
+        userId,
+        currentNodeCode: nodeCode,
+        currentWeek: node.weekNumber,
+        currentNodeStartedAt: new Date(),
+        isGroupUnlocked: node.weekNumber >= 1,
+        canUseTableView: node.weekNumber >= 1,
+      },
+    });
+  }
 }
 

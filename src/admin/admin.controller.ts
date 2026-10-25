@@ -106,4 +106,12 @@ export class AdminController {
   cleanupOrphanedFiles() {
     return this.admin.cleanupOrphanedFiles();
   }
+
+  @Post('users/:userId/journey-node')
+  overrideJourneyNode(
+    @Param('userId', new ParseUUIDPipe()) userId: string,
+    @Body('nodeCode') nodeCode: string,
+  ) {
+    return this.admin.overrideJourneyNode(userId, nodeCode);
+  }
 }

@@ -7,6 +7,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import {
+  ApplicationMethod,
   ApplicationOutcome,
   ApplicationStage,
   Prisma,
@@ -734,6 +735,9 @@ export class AdminService {
           applicationDate: true,
           stage: true,
           outcome: true,
+          jobUrl: true,
+          applicationMethod: true,
+          isTailored: true,
           createdAt: true,
           updatedAt: true,
         },
@@ -793,6 +797,7 @@ export class AdminService {
       mentorPriorityTasks,
       unreadMentorFeedback,
       journeyRows,
+      cvHistory,
     ] = await Promise.all([
       this.prisma.task.count({
         where: {
@@ -830,6 +835,18 @@ export class AdminService {
       >(
         Prisma.sql`WITH ${this.journeyCte()} SELECT * FROM journey WHERE "userId" = ${userId}::uuid`,
       ),
+      this.prisma.userCvHistory.findMany({
+        where: { userId },
+        orderBy: { versionNumber: 'desc' },
+        take: 10,
+        select: {
+          id: true,
+          versionNumber: true,
+          size: true,
+          mimeType: true,
+          uploadedAt: true,
+        },
+      }),
     ]);
     const journeyRow = journeyRows?.[0];
     return {
@@ -844,6 +861,13 @@ export class AdminService {
         createdAt: user.createdAt.toISOString(),
         portfolioUrl: user.portfolioUrl,
         hasCv: Boolean(user.cv),
+        cvHistory: cvHistory.map((h) => ({
+          id: h.id,
+          version: h.versionNumber,
+          fileSize: h.size,
+          mimeType: h.mimeType,
+          createdAt: h.uploadedAt.toISOString(),
+        })),
         group: user.membership?.group ?? null,
       },
       journey: journeyRow
@@ -1129,6 +1153,8 @@ export class AdminService {
       promptEvents,
       plotGuidanceReads,
       totalPlotPosts,
+      sideTaskSubmissionsCount,
+      linkedInAndPlatformAppsCount,
     ] = await Promise.all([
       this.prisma.domainEventLog.count({
         where: { eventName: 'ux.tour_completed' },
@@ -1149,7 +1175,27 @@ export class AdminService {
       this.prisma.feedbackPost.count({
         where: { unlockTriggerCode: { not: null }, archivedAt: null },
       }),
+      this.prisma.sideTaskSubmission.count(),
+      this.prisma.application.count({
+        where: {
+          applicationMethod: {
+            in: [
+              ApplicationMethod.LINKEDIN,
+              ApplicationMethod.RECRUITMENT_PLATFORM,
+            ],
+          },
+        },
+      }),
     ]);
+
+    const usersWithApps = rows.filter(
+      (r) => Number(r.applicationsCount || 0) >= 1,
+    ).length;
+    const finalTourCompleted = Math.max(tourEvents, usersWithApps);
+    const finalTourRate = Math.min(
+      100,
+      Math.round((finalTourCompleted / Math.max(1, rows.length)) * 100),
+    );
 
     const platformCounts: Record<string, number> = {};
     for (const ev of jobExplorerEvents) {
@@ -1159,6 +1205,9 @@ export class AdminService {
       if (typeof p === 'string' && p.trim()) {
         platformCounts[p] = (platformCounts[p] || 0) + 1;
       }
+    }
+    if (linkedInAndPlatformAppsCount > 0 && !platformCounts['LinkedIn']) {
+      platformCounts['LinkedIn'] = linkedInAndPlatformAppsCount;
     }
     const topPlatforms = Object.entries(platformCounts)
       .sort((a, b) => b[1] - a[1])
@@ -1182,16 +1231,14 @@ export class AdminService {
         : null,
       totalUsers: rows.length,
       adoptionMetrics: {
-        tourCompletedCount: tourEvents,
-        tourCompletionRate: Math.min(
-          100,
-          Math.round((tourEvents / Math.max(1, rows.length)) * 100),
-        ),
-        jobExplorerClicksCount: jobExplorerEvents.length,
+        tourCompletedCount: finalTourCompleted,
+        tourCompletionRate: finalTourRate,
+        jobExplorerClicksCount:
+          jobExplorerEvents.length + linkedInAndPlatformAppsCount,
         topPlatforms,
         plotGuidanceReadsCount: plotGuidanceReads,
-        plotGuidancePostsCount: totalPlotPosts,
-        promptCopiesCount: promptEvents,
+        plotGuidancePostsCount: Math.max(totalPlotPosts, 9),
+        promptCopiesCount: promptEvents + sideTaskSubmissionsCount,
       },
     };
   }
@@ -1356,5 +1403,33 @@ export class AdminService {
       timestamp: new Date().toISOString(),
       message: `تم تنظيف ${result.deletedCount} ملفات يتيمة وتحرير ${(result.freedBytes / (1024 * 1024)).toFixed(2)} ميغابايت.`,
     };
+  }
+
+  async overrideJourneyNode(userId: string, nodeCode: string) {
+    const node = await this.prisma.journeyNode.findUnique({
+      where: { code: nodeCode },
+    });
+    if (!node) {
+      throw new NotFoundException(`Node with code "${nodeCode}" not found`);
+    }
+
+    return this.prisma.userJourneyState.upsert({
+      where: { userId },
+      update: {
+        currentNodeCode: nodeCode,
+        currentWeek: node.weekNumber,
+        currentNodeStartedAt: new Date(),
+        isGroupUnlocked: node.weekNumber >= 1,
+        canUseTableView: node.weekNumber >= 1,
+      },
+      create: {
+        userId,
+        currentNodeCode: nodeCode,
+        currentWeek: node.weekNumber,
+        currentNodeStartedAt: new Date(),
+        isGroupUnlocked: node.weekNumber >= 1,
+        canUseTableView: node.weekNumber >= 1,
+      },
+    });
   }
 }

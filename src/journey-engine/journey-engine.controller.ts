@@ -109,5 +109,48 @@ export class AdminJourneyController {
   ) {
     return this.journeyEngine.updateJourneyNodeByCode(code, dto);
   }
+
+  @Get('plot-guidance')
+  getPlotGuidance() {
+    return this.journeyEngine.getAdminPlotGuidance();
+  }
+
+  @Patch('plot-guidance/:code')
+  updatePlotGuidance(
+    @Param('code') code: string,
+    @Body()
+    dto: {
+      title?: string;
+      content?: string;
+      promptTemplate?: string;
+      tierLevel?: string;
+    },
+    @CurrentUser('id') authorId: string,
+  ) {
+    return this.journeyEngine.updateAdminPlotGuidance(code, dto, authorId);
+  }
+
+  @Post('plot-guidance')
+  createPlotGuidance(
+    @Body()
+    dto: {
+      code: string;
+      title: string;
+      content: string;
+      promptTemplate?: string;
+      tierLevel?: string;
+    },
+    @CurrentUser('id') authorId: string,
+  ) {
+    return this.journeyEngine.createAdminPlotGuidance(dto, authorId);
+  }
+
+  @Post('users/:userId/override-node')
+  overrideUserNode(
+    @Param('userId', new ParseUUIDPipe()) userId: string,
+    @Body('nodeCode') nodeCode: string,
+  ) {
+    return this.journeyEngine.overrideUserJourneyNode(userId, nodeCode);
+  }
 }
 

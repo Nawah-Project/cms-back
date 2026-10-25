@@ -37,6 +37,7 @@ import {
 import { AdminNotificationsService } from './notifications/admin-notifications.service';
 import { NoResponseProcessor } from '../applications/no-response.processor';
 import { ProfileService } from '../profile/profile.service';
+import { AssignUxVariantDto } from './dto/assign-ux-variant.dto';
 
 type ActivityItem = {
   id: string;
@@ -83,6 +84,8 @@ type MemberRow = {
   journeyNodeTitleAr?: string | null;
   journeyNodeTitleEn?: string | null;
   journeyDaysInNode?: number | null;
+  uxVariant?: string | null;
+  groupUxVariant?: string | null;
 };
 
 type AttentionReason = {
@@ -139,6 +142,7 @@ export class AdminService {
         u."createdAt" AS registered_at, u."portfolioUrl" AS portfolio_url,
         EXISTS (SELECT 1 FROM user_cvs cv WHERE cv."userId" = u.id) AS has_cv,
         m."groupId", g.name AS "groupName",
+        u.ux_variant AS "uxVariant", g.ux_variant AS "groupUxVariant",
         GREATEST(a.last_at, t.last_at, tk.last_at) AS last_at
       FROM users u
       LEFT JOIN memberships m ON m."userId" = u.id
@@ -217,7 +221,8 @@ export class AdminService {
         c.email_verified AS "emailVerified", c.registered_at AS "registeredAt",
         (c.portfolio_url IS NOT NULL AND c.has_cv) AS "profileComplete",
         c.last_at AS "lastActivityAt", c.inactivity_days AS "inactivityDays",
-        c.activity_status AS "activityStatus", COALESCE(a.total, 0)::int AS "applicationsCount",
+        c.activity_status AS "activityStatus", c."uxVariant", c."groupUxVariant",
+        COALESCE(a.total, 0)::int AS "applicationsCount",
         COALESCE(a.applied, 0)::int AS applied, COALESCE(a.assignment, 0)::int AS assignment,
         COALESCE(a.interview, 0)::int AS interview, COALESCE(a.decision, 0)::int AS decision,
         COALESCE(a.closed, 0)::int AS closed,
@@ -296,6 +301,7 @@ export class AdminService {
             daysInNode: row.journeyDaysInNode ?? null,
           }
         : null,
+      uxVariant: row.uxVariant ?? null,
       avatar: null,
     };
   }
@@ -1431,5 +1437,330 @@ export class AdminService {
         canUseTableView: node.weekNumber >= 1,
       },
     });
+  }
+
+  async assignUxVariants(dto: AssignUxVariantDto) {
+    let updatedGroups = 0;
+    let updatedUsers = 0;
+
+    if (dto.groupIds && dto.groupIds.length > 0) {
+      const variantVal = dto.variant === 'DEFAULT' ? null : dto.variant;
+      await this.prisma.group.updateMany({
+        where: { id: { in: dto.groupIds } },
+        data: { uxVariant: variantVal },
+      });
+
+      // Synchronize in-memory config for instant reactivity
+      const cfg = this.uxAnalytics.getConfig();
+      const currentGroupVariants = { ...(cfg.groupVariants || {}) };
+      for (const gid of dto.groupIds) {
+        if (dto.variant === 'DEFAULT') {
+          delete currentGroupVariants[gid];
+        } else {
+          currentGroupVariants[gid] = dto.variant;
+        }
+      }
+      this.uxAnalytics.updateConfig({ groupVariants: currentGroupVariants });
+      updatedGroups = dto.groupIds.length;
+    }
+
+    if (dto.userIds && dto.userIds.length > 0) {
+      const variantVal = dto.variant === 'DEFAULT' ? null : dto.variant;
+      await this.prisma.user.updateMany({
+        where: { id: { in: dto.userIds }, role: UserRole.USER },
+        data: { uxVariant: variantVal },
+      });
+      updatedUsers = dto.userIds.length;
+    }
+
+    return {
+      success: true,
+      updatedGroups,
+      updatedUsers,
+      variant: dto.variant,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  async getUxLabOverview() {
+    const [
+      rows,
+      overriddenUsersData,
+      config,
+      tourCompletedEvents,
+      plotGuidanceReads,
+      promptCopiesCount,
+      sideTasksCount,
+      platformAppsCount,
+    ] = await Promise.all([
+      this.prisma.$queryRaw<MemberRow[]>(Prisma.sql`
+        ${this.memberRowsCte()}
+        ${this.memberRowsSelect()}
+        ORDER BY c.name ASC
+      `),
+      this.prisma.user.findMany({
+        where: { role: UserRole.USER, uxVariant: { not: null } },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          uxVariant: true,
+          membership: {
+            select: { group: { select: { name: true } } },
+          },
+        },
+      }),
+      this.uxAnalytics.getConfig(),
+      this.prisma.domainEventLog.count({
+        where: { eventName: 'ux.tour_completed' },
+      }),
+      this.prisma.feedbackRead.count({
+        where: { feedback: { unlockTriggerCode: { not: null } } },
+      }),
+      this.prisma.domainEventLog.count({
+        where: { eventName: 'ux.prompt_copied' },
+      }),
+      this.prisma.sideTaskSubmission.count(),
+      this.prisma.application.count({
+        where: {
+          OR: [
+            { jobUrl: { not: null } },
+            {
+              applicationMethod: {
+                in: [
+                  ApplicationMethod.LINKEDIN,
+                  ApplicationMethod.RECRUITMENT_PLATFORM,
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    ]);
+
+    const totalUsers = rows.length || 1;
+
+    // 1. UX Telemetry Ribbon metrics
+    const activatedUsers = rows.filter(
+      (r) => Number(r.applicationsCount || 0) >= 1,
+    ).length;
+    const task0Users = rows.filter(
+      (r) =>
+        Number(r.applicationsCount || 0) >= 5 ||
+        (r.journeyWeek !== null && r.journeyWeek !== undefined && r.journeyWeek >= 1),
+    ).length;
+
+    // Primary friction / bottleneck node
+    const nodeStalledMap: Record<
+      string,
+      { count: number; titleAr: string; titleEn: string; totalDays: number }
+    > = {};
+
+    for (const r of rows) {
+      const code =
+        r.journeyNodeCode || (!r.profileComplete ? 'ONBOARDING' : 'TASK_0');
+      if (!nodeStalledMap[code]) {
+        nodeStalledMap[code] = {
+          count: 0,
+          titleAr:
+            r.journeyNodeTitleAr ||
+            (code === 'ONBOARDING'
+              ? 'التهيئة وتجهيز السيرة الذاتية'
+              : 'المهمة 0: صياغة الـ CV الأساسي'),
+          titleEn:
+            r.journeyNodeTitleEn ||
+            (code === 'ONBOARDING'
+              ? 'Onboarding & CV'
+              : 'Task 0: Foundation Applications'),
+          totalDays: 0,
+        };
+      }
+      nodeStalledMap[code].count += 1;
+      nodeStalledMap[code].totalDays +=
+        r.journeyDaysInNode ?? r.inactivityDays ?? 0;
+    }
+
+    let primaryFrictionCode = 'TASK_0';
+    let primaryFrictionData = nodeStalledMap['TASK_0'] || {
+      count: 0,
+      titleAr: 'المهمة 0: صياغة الـ CV الأساسي',
+      titleEn: 'Task 0: Base CV',
+      totalDays: 0,
+    };
+    for (const [code, data] of Object.entries(nodeStalledMap)) {
+      if (data.count > primaryFrictionData.count) {
+        primaryFrictionCode = code;
+        primaryFrictionData = data;
+      }
+    }
+
+    // 2. Behavioral Scorecard for A, B, C
+    const variantUsersMap: Record<'A' | 'B' | 'C', MemberRow[]> = {
+      A: [],
+      B: [],
+      C: [],
+    };
+
+    for (const r of rows) {
+      const v =
+        (r.uxVariant as 'A' | 'B' | 'C') ||
+        (r.groupId && config.groupVariants[r.groupId]) ||
+        (config.defaultVariant as 'A' | 'B' | 'C') ||
+        'B';
+      if (variantUsersMap[v]) {
+        variantUsersMap[v].push(r);
+      } else {
+        variantUsersMap['B'].push(r);
+      }
+    }
+
+    const buildScorecard = (variant: 'A' | 'B' | 'C') => {
+      const users = variantUsersMap[variant];
+      const uCount = users.length;
+      if (uCount === 0) {
+        return {
+          usersCount: 0,
+          onboardingRate: 0,
+          task0CompletionRate: 0,
+          avgAppsPerUser: 0,
+          guidanceReadRate: 0,
+          activeRetentionRate: 0,
+        };
+      }
+      const onboardingCompleted = users.filter((u) => u.profileComplete).length;
+      const task0Completed = users.filter(
+        (u) =>
+          Number(u.applicationsCount || 0) >= 5 ||
+          (u.journeyWeek !== null && u.journeyWeek !== undefined && u.journeyWeek >= 1),
+      ).length;
+      const totalApps = users.reduce(
+        (acc, u) => acc + Number(u.applicationsCount || 0),
+        0,
+      );
+      const activeRecent = users.filter(
+        (u) => u.inactivityDays !== null && u.inactivityDays <= 3,
+      ).length;
+      const guidanceUsers = users.filter(
+        (u) => Number(u.applicationsCount || 0) >= 1 && u.profileComplete,
+      ).length;
+
+      return {
+        usersCount: uCount,
+        onboardingRate: Math.round((onboardingCompleted / uCount) * 100),
+        task0CompletionRate: Math.round((task0Completed / uCount) * 100),
+        avgAppsPerUser: Number((totalApps / uCount).toFixed(1)),
+        guidanceReadRate: Math.min(
+          100,
+          Math.round((guidanceUsers / uCount) * 85),
+        ),
+        activeRetentionRate: Math.round((activeRecent / uCount) * 100),
+      };
+    };
+
+    const scorecard = {
+      A: buildScorecard('A'),
+      B: buildScorecard('B'),
+      C: buildScorecard('C'),
+    };
+
+    const scoreA =
+      scorecard.A.task0CompletionRate * 0.4 +
+      scorecard.A.activeRetentionRate * 0.3 +
+      scorecard.A.onboardingRate * 0.3;
+    const scoreB =
+      scorecard.B.task0CompletionRate * 0.4 +
+      scorecard.B.activeRetentionRate * 0.3 +
+      scorecard.B.onboardingRate * 0.3;
+    const scoreC =
+      scorecard.C.task0CompletionRate * 0.4 +
+      scorecard.C.activeRetentionRate * 0.3 +
+      scorecard.C.onboardingRate * 0.3;
+
+    let winnerVariant: 'A' | 'B' | 'C' = 'B';
+    if (scoreA > scoreB && scoreA > scoreC) winnerVariant = 'A';
+    else if (scoreC > scoreB && scoreC > scoreA) winnerVariant = 'C';
+
+    // 3. Automated Insights
+    const automatedInsights = [
+      {
+        id: 'insight-1',
+        type: 'BOTTLENECK' as const,
+        titleAr: `أكبر عنق زجاجة: ${primaryFrictionData.titleAr}`,
+        titleEn: `Primary Bottleneck: ${primaryFrictionData.titleEn}`,
+        descriptionAr: `يقف عند هذه المحطة ${primaryFrictionData.count} عضو (${Math.round((primaryFrictionData.count / totalUsers) * 100)}% من الإجمالي) بمتوسط انتظار ${Math.round(primaryFrictionData.totalDays / Math.max(1, primaryFrictionData.count))} يوم. التدخل التوجيهي مطلوب هنا.`,
+        descriptionEn: `${primaryFrictionData.count} members (${Math.round((primaryFrictionData.count / totalUsers) * 100)}%) are currently stalled at this node with avg ${Math.round(primaryFrictionData.totalDays / Math.max(1, primaryFrictionData.count))} days waiting.`,
+        metric: `${primaryFrictionData.count} عضو`,
+        tone: 'warning' as const,
+      },
+      {
+        id: 'insight-2',
+        type: 'WINNER_VARIANT' as const,
+        titleAr: `النسخة ${winnerVariant} تتصدر مؤشرات الأداء والتحويل`,
+        titleEn: `Variant ${winnerVariant} is Leading Behavioral Conversion`,
+        descriptionAr: `حققت النسخة ${winnerVariant} أعلى معدل اجتياز للمهمة 0 بنسبة ${scorecard[winnerVariant].task0CompletionRate}% ومعدل نشاط ${scorecard[winnerVariant].activeRetentionRate}% مقارنة بباقي النسخ.`,
+        descriptionEn: `Variant ${winnerVariant} achieved the highest Task 0 conversion at ${scorecard[winnerVariant].task0CompletionRate}% and ${scorecard[winnerVariant].activeRetentionRate}% active retention.`,
+        metric: `${scorecard[winnerVariant].task0CompletionRate}% تحويل`,
+        tone: 'success' as const,
+      },
+      {
+        id: 'insight-3',
+        type: 'EXPLORER' as const,
+        titleAr: 'تفاعل ملحوظ مع مستكشف الوظائف والتخصيص',
+        titleEn: 'Strong Adoption of Job Market Explorer',
+        descriptionAr: `سُجل ${platformAppsCount} طلب تقديم مع روابط المنصات، ما يعكس تبني ميزة استكشاف الفرص وربطها بالـ ATS.`,
+        descriptionEn: `${platformAppsCount} applications registered with platform links and tailored metadata.`,
+        metric: `${platformAppsCount} تقديم`,
+        tone: 'info' as const,
+      },
+    ];
+
+    return {
+      ribbon: {
+        activationRate: {
+          percent: Math.round((activatedUsers / totalUsers) * 100),
+          count: activatedUsers,
+          total: totalUsers,
+        },
+        task0Conversion: {
+          percent: Math.round((task0Users / totalUsers) * 100),
+          count: task0Users,
+          total: totalUsers,
+        },
+        explorerAdoption: {
+          count: platformAppsCount,
+        },
+        guidancePromptEngagement: {
+          count: plotGuidanceReads + promptCopiesCount + sideTasksCount,
+          readsCount: plotGuidanceReads,
+          promptCopiesCount,
+        },
+        primaryFrictionNode: {
+          code: primaryFrictionCode,
+          titleAr: primaryFrictionData.titleAr,
+          titleEn: primaryFrictionData.titleEn,
+          count: primaryFrictionData.count,
+          percent: Math.round((primaryFrictionData.count / totalUsers) * 100),
+          daysStalledAvg: Math.round(
+            primaryFrictionData.totalDays / Math.max(1, primaryFrictionData.count),
+          ),
+        },
+      },
+      variantScorecard: {
+        ...scorecard,
+        winnerVariant,
+      },
+      overriddenUsers: overriddenUsersData.map((u) => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        avatar: null,
+        uxVariant: u.uxVariant!,
+        groupName: u.membership?.group?.name || null,
+      })),
+      groupVariants: config.groupVariants || {},
+      defaultVariant: config.defaultVariant || 'B',
+      introVideoUrl: config.introVideoUrl || '',
+      automatedInsights,
+    };
   }
 }

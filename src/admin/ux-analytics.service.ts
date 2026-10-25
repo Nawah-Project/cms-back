@@ -232,6 +232,43 @@ export class UxAnalyticsService implements OnModuleInit {
     return this.config.defaultVariant;
   }
 
+  async getVariantForUser(userId: string): Promise<ExperimentVariant> {
+    if (this.prisma) {
+      try {
+        const user = await this.prisma.user.findUnique({
+          where: { id: userId },
+          select: {
+            uxVariant: true,
+            membership: {
+              select: {
+                groupId: true,
+                group: { select: { uxVariant: true } },
+              },
+            },
+          },
+        });
+        if (user?.uxVariant && isExperimentVariant(user.uxVariant)) {
+          return user.uxVariant;
+        }
+        if (
+          user?.membership?.group?.uxVariant &&
+          isExperimentVariant(user.membership.group.uxVariant)
+        ) {
+          return user.membership.group.uxVariant;
+        }
+        if (
+          user?.membership?.groupId &&
+          this.config.groupVariants[user.membership.groupId]
+        ) {
+          return this.config.groupVariants[user.membership.groupId];
+        }
+      } catch {
+        // Fall back to default
+      }
+    }
+    return this.config.defaultVariant;
+  }
+
   updateConfig(dto: UpdateUxConfigDto): UxConfigState {
     if (isExperimentVariant(dto.defaultVariant)) {
       this.config.defaultVariant = dto.defaultVariant;

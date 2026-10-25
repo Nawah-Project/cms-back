@@ -20,6 +20,7 @@ import {
 } from './dto/monitoring-query.dto';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { UpdateUxConfigDto } from './dto/track-ux-event.dto';
+import { AssignUxVariantDto } from './dto/assign-ux-variant.dto';
 
 @Controller('admin')
 @UseGuards(JwtAuthGuard, AdminGuard)
@@ -90,6 +91,16 @@ export class AdminController {
   @Get('monitoring/granular-funnel')
   getGranularFunnel() {
     return this.admin.getGranularFunnel();
+  }
+
+  @Get('ux-lab/overview')
+  getUxLabOverview() {
+    return this.admin.getUxLabOverview();
+  }
+
+  @Patch('ux-lab/variants/assign')
+  assignUxVariants(@Body() dto: AssignUxVariantDto) {
+    return this.admin.assignUxVariants(dto);
   }
 
   @Get('operations/stats')

@@ -31,5 +31,57 @@ describe('admin report preview demo fixture', () => {
     expect(report.completedNodeCodes).toContain('FINAL_REPORT');
     expect(report.activities.every((activity) => activity.id.startsWith('demo-'))).toBe(true);
     expect(report.cvs.every((cv) => cv.originalName.startsWith('DEMO-'))).toBe(true);
+    expect(report.weeklyStages.find((week) => week.week === 1)).toMatchObject({
+      available: true,
+      complete: true,
+      reflectionRecorded: false,
+    });
+    expect(report.weeklyStages.find((week) => week.week === 2)?.nextStage?.titleEn).toContain('Week 3');
+    expect(report.readGuidance.map((item) => item.titleEn)).toContain('Insight 0: Building Your ATS-Ready Base CV');
+  });
+
+  it('provides deterministic DTO-compatible scenarios without touching persistence', () => {
+    const empty = buildDemoReports('EMPTY');
+    const one = buildDemoReports('ONE');
+    const early = buildDemoReports('EARLY');
+    const week1Complete = buildDemoReports('WEEK1_COMPLETE');
+    const week3Complete = buildDemoReports('WEEK3_COMPLETE');
+    const populated = buildDemoReports('POPULATED');
+
+    expect(empty.overall.logged).toBe(0);
+    expect(empty.cvs).toEqual([]);
+    expect(one.overall.logged).toBe(1);
+    expect(one.cvs).toHaveLength(1);
+    expect(early.overall.logged).toBe(5);
+    expect(early.overall.interviews).toBe(1);
+    expect(early.overall.assignments).toBe(1);
+    expect(early.weeklyStages.find((week) => week.week === 1)).toMatchObject({
+      available: true,
+      complete: false,
+      currentWeekStartedAt: new Date('2026-10-05T12:00:00.000Z'),
+    });
+    expect(early.weeklyStages.find((week) => week.week === 2)).toEqual({
+      week: 2,
+      available: false,
+    });
+    expect(week1Complete.overall.logged).toBe(3);
+    expect(week1Complete.weeklyStages.find((week) => week.week === 1)).toMatchObject({
+      available: true, complete: true, reflectionRecorded: true,
+    });
+    expect(week1Complete.weeklyStages.find((week) => week.week === 3)).toEqual({
+      week: 3, available: false,
+    });
+    expect(week3Complete.overall.logged).toBe(15);
+    expect(week3Complete.weeklyStages.filter((week) => week.available).map((week) => week.week)).toEqual([1, 2, 3, 4]);
+    expect(week3Complete.weeklyStages.slice(0, 3).every((week) => week.complete && week.reflectionRecorded)).toBe(true);
+    expect(week3Complete.finalAvailable).toBe(false);
+    expect(week3Complete.completed).toBe(false);
+    expect(populated.overall.logged).toBe(30);
+    expect(populated.cvs.map((cv) => cv.versionNumber)).toEqual([1, 2]);
+    expect(populated.activities.filter((item) => item.type === 'USER_CHANGE')).toHaveLength(2);
+    expect(populated.completed).toBe(false);
+    expect(populated.weeklyDaily.some((row) => row.week === 4)).toBe(true);
+    expect(populated.weeklyDaily.some((row) => row.week === 1 && row.date === '2026-09-01')).toBe(true);
+    expect(JSON.stringify(buildDemoReports('POPULATED'))).toBe(JSON.stringify(populated));
   });
 });

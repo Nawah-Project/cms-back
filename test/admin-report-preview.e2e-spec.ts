@@ -101,14 +101,29 @@ describe('Admin report preview (disposable PostgreSQL e2e)', () => {
     await request(server)
       .get(`/admin/journey/reports/${member.userId}`)
       .expect(401);
-    await member.agent.get('/admin/journey/reports/demo').expect(403);
+    await member.agent.get('/admin/journey/reports/demo?scenario=POPULATED').expect(403);
     await member.agent
       .get(`/admin/journey/reports/${member.userId}`)
       .expect(403);
 
-    const demo = await admin.agent
-      .get('/admin/journey/reports/demo')
-      .expect(200);
+    await admin.agent.get('/admin/journey/reports/demo?scenario=UNKNOWN').expect(400);
+    for (const [scenario, count] of [
+      ['EMPTY', 0],
+      ['ONE', 1],
+      ['EARLY', 5],
+      ['WEEK1_COMPLETE', 3],
+      ['WEEK3_COMPLETE', 15],
+      ['POPULATED', 30],
+      ['COMPLETED', 9],
+    ] as const) {
+      const sample = await admin.agent
+        .get(`/admin/journey/reports/demo?scenario=${scenario}`)
+        .expect(200);
+      expect(sample.body.mode).toBe('DEMO');
+      expect(sample.body.report.overall.logged).toBe(count);
+      expect(sample.body.report.weeklyStages).toHaveLength(4);
+    }
+    const demo = await admin.agent.get('/admin/journey/reports/demo').expect(200);
     expect(demo.body.mode).toBe('DEMO');
     expect(demo.body.report.weeks.map((week: { week: number }) => week.week)).toEqual([
       0, 1, 2, 3, 4,
@@ -127,6 +142,11 @@ describe('Admin report preview (disposable PostgreSQL e2e)', () => {
     expect(actual.body.report.currentNodeCode).toBe('W1_M1');
     expect(actual.body.report.currentWeek).toBe(1);
     expect(actual.body.report.completed).toBe(false);
+    expect(actual.body.report.weeklyStages.find((week: { week: number }) => week.week === 2)).toEqual({
+      week: 2,
+      available: false,
+    });
+    expect(actual.body.report.readGuidance).toEqual([]);
 
     const stateAfterPreview = await prisma.userJourneyState.findUniqueOrThrow({
       where: { userId: member.userId },

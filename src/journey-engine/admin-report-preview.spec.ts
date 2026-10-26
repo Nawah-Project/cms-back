@@ -14,6 +14,7 @@ describe('admin report preview isolation', () => {
       sideTaskSubmission: { findMany: jest.fn().mockResolvedValue([]) },
       userCvHistory: { findMany: jest.fn().mockResolvedValue([]) },
       task: { findMany: jest.fn().mockResolvedValue([]) },
+      journeyNode: { findMany: jest.fn().mockResolvedValue([]) },
       userJourneyState: {
         findUnique: jest.fn().mockResolvedValue({
           readInsightCodes: ['INSIGHT_A'],

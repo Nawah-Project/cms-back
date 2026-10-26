@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -17,6 +18,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreateSideTaskDto } from './dto/create-side-task.dto';
 import { UpdateJourneyNodeDto } from './dto/update-journey-node.dto';
 import { JourneyEngineService } from './journey-engine.service';
+import type { DemoReportScenario } from './reporting.util';
 
 @Controller('journey')
 @UseGuards(JwtAuthGuard)
@@ -109,8 +111,17 @@ export class AdminJourneyController {
   constructor(private readonly journeyEngine: JourneyEngineService) {}
 
   @Get('reports/demo')
-  getDemoReportPreview() {
-    return { mode: 'DEMO' as const, report: this.journeyEngine.getDemoReports() };
+  getDemoReportPreview(@Query('scenario') scenario?: string) {
+    const scenarios: DemoReportScenario[] = [
+      'EMPTY', 'ONE', 'EARLY', 'WEEK1_COMPLETE', 'WEEK3_COMPLETE', 'POPULATED', 'COMPLETED',
+    ];
+    if (scenario && !scenarios.includes(scenario as DemoReportScenario)) {
+      throw new BadRequestException('Unknown report preview scenario');
+    }
+    return {
+      mode: 'DEMO' as const,
+      report: this.journeyEngine.getDemoReports(scenario as DemoReportScenario | undefined),
+    };
   }
 
   @Get('reports/:userId')

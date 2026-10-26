@@ -22,6 +22,7 @@ import {
 import {
   buildDemoReports,
   buildReportsPayload,
+  type DemoReportScenario,
   reportApplicationSelect,
   reportMetrics,
 } from './reporting.util';
@@ -1043,9 +1044,9 @@ export class JourneyEngineService implements OnModuleInit {
     };
   }
 
-  getDemoReports() {
+  getDemoReports(scenario: DemoReportScenario = 'COMPLETED') {
     // The deterministic fixture is calculated in memory and never touches Prisma.
-    return buildDemoReports();
+    return buildDemoReports(scenario);
   }
 
   async getAdminReportPreview(userId: string) {
@@ -1087,7 +1088,7 @@ export class JourneyEngineService implements OnModuleInit {
         if (!user) throw new NotFoundException('User not found');
       }
 
-      const [applications, activities, cvs, tasks, persistedState] =
+      const [applications, activities, cvs, tasks, journeyNodes, persistedState] =
         await Promise.all([
           tx.application.findMany({
             where: { userId },
@@ -1111,6 +1112,20 @@ export class JourneyEngineService implements OnModuleInit {
             where: { userId, status: 'DONE' },
             select: { id: true, title: true, completedAt: true },
           }),
+          tx.journeyNode.findMany({
+            where: { weekNumber: { in: [1, 2, 3, 4] } },
+            orderBy: [{ orderIndex: 'asc' }],
+            select: {
+              code: true,
+              weekNumber: true,
+              orderIndex: true,
+              nodeType: true,
+              titleAr: true,
+              titleEn: true,
+              descriptionAr: true,
+              descriptionEn: true,
+            },
+          }),
           tx.userJourneyState.findUnique({ where: { userId } }),
         ]);
 
@@ -1119,6 +1134,7 @@ export class JourneyEngineService implements OnModuleInit {
         completedNodeCodes: [],
         currentNodeCode: 'TASK_0',
         currentWeek: 0,
+        weekStartedAt: null,
       };
 
       return buildReportsPayload({
@@ -1126,6 +1142,7 @@ export class JourneyEngineService implements OnModuleInit {
         activities,
         cvs,
         tasks,
+        journeyNodes: journeyNodes.length ? journeyNodes : [...JOURNEY_V4_NODES],
         state,
       });
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });

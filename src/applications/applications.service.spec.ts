@@ -201,4 +201,13 @@ describe('ApplicationsService', () => {
     expect(stats.active.total).toBe(3);
     expect(stats.closed.noResponse).toBe(2);
   });
+  it('uses only the caller CV history and an inclusive-start/exclusive-end cohort', async () => {
+    const start = new Date('2026-10-20T12:00:00Z'), end = new Date('2026-10-21T12:00:00Z');
+    prisma.userCvHistory = {findMany: jest.fn().mockResolvedValue([{versionNumber:1,uploadedAt:start},{versionNumber:2,uploadedAt:end}])};
+    await service.findAll('user-id',{cvVersion:1,stage:ApplicationStage.INTERVIEW});
+    expect(prisma.userCvHistory.findMany).toHaveBeenCalledWith(expect.objectContaining({where:{userId:'user-id'}}));
+    expect(prisma.application.findMany).toHaveBeenCalledWith(expect.objectContaining({where:expect.objectContaining({userId:'user-id',stage:ApplicationStage.INTERVIEW,AND:[{createdAt:{gte:start,lt:end}}]})}));
+    await expect(service.findAll('user-id',{cvVersion:999})).rejects.toBeInstanceOf(BadRequestException);
+  });
+
 });

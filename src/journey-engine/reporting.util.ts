@@ -1,3 +1,4 @@
+import { cvFoundationStatus } from './cv-foundation.util';
 import { isWeeklyReflection } from './journey-rules';
 import { PROFESSIONAL_CHANGE_INTERVAL_MS } from './professional-change.util';
 import { JOURNEY_GUIDANCE_CATALOG } from '../feedback/journey-guidance.catalog';
@@ -79,6 +80,9 @@ export interface ReportStateInput {
   currentNodeCode: string;
   currentWeek: number;
   week1StartedAt?: Date | null;
+  cvFoundationBaselineVersion?: number | null;
+  cvFoundationCompletedAt?: Date | null;
+  cvVersionNumber?: number;
   weekStartedAt?: Date | null;
 }
 
@@ -231,7 +235,7 @@ export function buildReportsPayload(input: {
   // CV uploads and explicit USER_CHANGE records. Outcomes are current as-of
   // this snapshot and are not attributed to the checkpoint.
   const checkpoints = [
-    ...input.cvs.map(cv => ({ id: cv.id, kind: 'CV' as const, title: `CV v${cv.versionNumber}`, at: cv.uploadedAt })),
+    ...input.cvs.map(cv => ({ id: cv.id, kind: 'CV' as const, title: `CV ${Math.max(0, cv.versionNumber - 1)}`, at: cv.uploadedAt })),
     ...input.activities.filter(activity => activity.type === 'USER_CHANGE').map((activity, index) => ({
       id: activity.id, kind: 'USER_CHANGE' as const, title: `Manual change ${index + 1}`, at: activity.createdAt,
     })),
@@ -303,6 +307,7 @@ export function buildReportsPayload(input: {
     dailyCohorts: [...cohortDays.values()].sort((a, b) => a.date.localeCompare(b.date)),
     manualUpdate: { eligible: week >= 3, canSubmit: week >= 3 && (!nextAvailableAt || asOf >= nextAvailableAt), nextAvailableAt },
     analyticsAccess,
+    cvFoundation: cvFoundationStatus(input.state, input.cvs),
     asOf,
     overall: {
       ...reportMetrics(input.applications),

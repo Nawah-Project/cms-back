@@ -437,6 +437,8 @@ model UserJourneyState {
   canUseTableView      Boolean  @default(false) // يفتح بعد إتمام W1_M1 (10 طلبات في الأسبوع 1)
   hasUnlockedAdvPrep   Boolean  @default(false) // يفتح عند أول INTERVIEW أو hasAssignment
   cvVersionNumber      Int       @default(1)
+  cvFoundationBaselineVersion Int?
+  cvFoundationCompletedAt DateTime?
   week1StartedAt       DateTime?
   updatedAt            DateTime  @updatedAt
 

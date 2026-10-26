@@ -194,6 +194,12 @@ export class ApplicationsService {
           }
         : {}),
     };
+    if (query.cvVersion) {
+      const versions = await this.prisma.userCvHistory.findMany({where:{userId},orderBy:[{uploadedAt:'asc'},{versionNumber:'asc'}],select:{versionNumber:true,uploadedAt:true}});
+      const index = versions.findIndex(version => version.versionNumber === query.cvVersion);
+      if (index < 0) throw new BadRequestException('This CV version is unavailable for your account');
+      where.AND = [{createdAt:{gte:versions[index].uploadedAt,...(versions[index+1]?{lt:versions[index+1].uploadedAt}:{})}}];
+    }
     const [data, total, unfilteredTotal] = await this.prisma.$transaction([
       this.prisma.application.findMany({
         where,

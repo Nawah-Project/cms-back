@@ -28,6 +28,8 @@ describe('JourneyEngineService (Journey V4 State Machine)', () => {
       canUseTableView: false,
       hasUnlockedAdvPrep: false,
       cvVersionNumber: 1,
+      cvFoundationBaselineVersion: null,
+      cvFoundationCompletedAt: null,
       updatedAt: new Date('2026-10-20T00:00:00.000Z'),
     };
 
@@ -52,6 +54,7 @@ describe('JourneyEngineService (Journey V4 State Machine)', () => {
         findMany: jest.fn().mockResolvedValue([]),
         upsert: jest.fn().mockResolvedValue({}),
       },
+      userCvHistory: { findFirst: jest.fn().mockResolvedValue(null) },
       application: {
         count: jest.fn().mockResolvedValue(0),
       },
@@ -145,6 +148,8 @@ describe('JourneyEngineService (Journey V4 State Machine)', () => {
         weekStartedAt: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000),
         completedNodeCodes: ['TASK_0'],
         unlockedInsightCodes: ['INSIGHT_TASK_0_CV_BASE'],
+        readInsightCodes: ['INSIGHT_TASK_0_CV_BASE'],
+        cvFoundationCompletedAt: new Date(),
         isGroupUnlocked: true,
         canUseTableView: false,
       };
@@ -369,5 +374,29 @@ describe('JourneyEngineService (Journey V4 State Machine)', () => {
       expect(compass.platforms[0].url).toContain('Frontend%20Developer');
     });
   });
+  describe('Week 1 foundation prerequisite enforcement', () => {
+    it('rejects reading completion without a revised CV even through the direct API', async () => {
+      currentState = {...currentState,currentWeek:1,completedNodeCodes:['TASK_0'],unlockedInsightCodes:['INSIGHT_TASK_0_CV_BASE'],cvFoundationBaselineVersion:1};
+      prisma.feedbackPost = {findFirst:jest.fn().mockResolvedValue({id:'cv-guide'})};
+      prisma.userJourneyState.updateMany = jest.fn();
+      await expect(service.markInsightRead('user-1','INSIGHT_TASK_0_CV_BASE')).rejects.toMatchObject({response:expect.objectContaining({code:'CV_UPDATE_REQUIRED'})});
+      expect(prisma.userJourneyState.updateMany).not.toHaveBeenCalled();
+    });
+    it('does not advance a completed application quota before CV foundation completion', async () => {
+      currentState = {...currentState,currentWeek:1,currentNodeCode:'W1_M1',completedNodeCodes:['TASK_0']};
+      prisma.application.count.mockResolvedValue(100);
+      const state = await service.evaluateProgress('user-1');
+      expect(state.currentNodeCode).toBe('W1_M1');
+      expect(state.completedNodeCodes).not.toContain('W1_M1');
+    });
+    it('does not reveal the basic interview guide on an early interview before quest two', async () => {
+      currentState = {...currentState,currentWeek:1,completedNodeCodes:['TASK_0']};
+      prisma.application.count.mockResolvedValue(1);
+      prisma.feedbackPost = {findFirst:jest.fn().mockResolvedValue(null)};
+      await service.evaluateInterviewGuidanceUnlocks('user-1');
+      expect(currentState.unlockedInsightCodes).not.toContain('INSIGHT_W1_INTERVIEW_BASIC');
+    });
+  });
+
 });
 

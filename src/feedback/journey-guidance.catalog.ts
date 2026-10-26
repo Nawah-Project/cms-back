@@ -4,6 +4,8 @@ export interface JourneyGuidanceSeedItem {
   isAdvanced?: boolean;
   titleAr: string;
   titleEn: string;
+  contentAr?: string;
+  contentEn?: string;
   summaryAr: string;
   summaryEn: string;
   promptTemplateAr: string;
@@ -12,58 +14,28 @@ export interface JourneyGuidanceSeedItem {
 
 export const JOURNEY_GUIDANCE_CATALOG: JourneyGuidanceSeedItem[] = [
   {
-    code: 'INSIGHT_TASK_0_CV_BASE',
-    weekNumber: 0,
-    titleAr: 'ملاحظة 0: تأسيس السيرة الذاتية الأساسية المتوافقة مع ATS',
-    titleEn: 'Insight 0: Building Your ATS-Ready Base CV',
-    summaryAr:
-      'كيف تهيكل سيرتك الذاتية الأساسية بلغة الإنجازات القابلة للقياس وتضمن اجتياز أنظمة الفرز الآلي (ATS) قبل الانطلاق في الأسبوع الأول.',
-    summaryEn:
-      'How to structure your core CV around measurable impact and pass ATS filters before starting Week 1.',
-    promptTemplateAr: `أنت خبير توظيف تقني ومراجع سير ذاتية (ATS Specialist).
-المسمى الوظيفي المستهدف: [اكتب المسمى الوظيفي هنا]
-هذه نبذة عن خبراتي ومشاريعي الحالية:
-[الصق خبراتك ومشاريعك هنا]
-
-المطلوب:
-1. إعادة صياغة النقاط بنظام (Action Verb + Task + Measurable Impact).
-2. اقتراح أهم 12 كلمة مفتاحية تقنية يجب تضمينها لهذا المسمى الوظيفي.
-3. كتابة ملخص مهني (Professional Summary) من 3 أسطر يجذب مسؤول التوظيف خلال 6 ثوانٍ.`,
-    promptTemplateEn: `Act as a Senior Technical Recruiter and ATS Specialist.
-Target Role: [Insert Target Job Title]
-Here are my current experiences and projects:
-[Paste your current CV bullet points / projects]
-
-Please:
-1. Rewrite my bullet points using the Action Verb + Task + Measurable Impact formula.
-2. Suggest the top 12 ATS keywords for this target role.
-3. Write a 3-line high-impact Professional Summary tailored for a 6-second recruiter scan.`,
+    "code": "INSIGHT_TASK_0_CV_BASE",
+    "weekNumber": 0,
+    "titleAr": "من مهاراتك إلى حلول مفيدة وأثر واضح: حسّن سيرتك الذاتية",
+    "titleEn": "Skills, useful solutions and impact: improve your CV",
+    "summaryAr": "حوّل وصف مهاراتك إلى صورة مفهومة لما تستطيع بناءه أو تحسينه، ولماذا يهم المستخدم والبزنس. طبّق المراجعة وارفع CV محدّثًا هنا لفتح تحليلاتك.",
+    "summaryEn": "Connect your skills to useful solutions and meaningful user and business outcomes. Apply the review and upload your revised CV here to unlock analytics.",
+    "contentAr": "<h3>ليه ده مهم؟</h3><p>مسؤول تقني محتاج يفهم قدراتك وطريقة شغلك، وشخص من البزنس محتاج يفهم المشكلة اللي تقدر تحلها. السيرة القوية بتربط الاتنين من غير مبالغة أو مصطلحات للتزيين.</p><h3>١. مهاراتك: بتعرف تعمل إيه؟</h3><p>حدّد المهارات المرتبطة بتخصصك، وادعمها بمثال حقيقي من مشروع أو تدريب أو شغل. بدل قائمة أدوات طويلة، وضّح استخدمت المهارة إزاي وإيه قرارك أنت.</p><h3>٢. حلول مفيدة: المهارة دي بتخدم مين؟</h3><p>اربط المهارة بمشكلة وتجربة أو نظام فعلي: مثل واجهة تسهّل إتمام طلب، اختبار يمنع عطلًا، لوحة بيانات تساعد قرارًا، أو جزء من CRM أو ERP لو ده مناسب لشغلك. الأمثلة تتغير حسب التخصص؛ مش مطلوب تدّعي بناء نظام كامل.</p><h3>٣. الأثر على المستخدم والبزنس</h3><p>اشرح النتيجة: تقليل أخطاء أو وقت تنفيذ، تحسين تجربة أو أداء، دعم المبيعات، أو تسريع طرح منتج. استخدم أرقامًا عندك دليل عليها فقط؛ لو مفيش قياس، صف الأثر المتوقع بوضوح من غير تحويله لإنجاز متحقق.</p><p><strong>صيغة مفيدة:</strong> استخدمت [المهارة] في [حل أو مشروع] لمساعدة [مستخدم/فريق] على [نتيجة حقيقية أو هدف واضح].</p><h3>اعمل إيه دلوقتي؟</h3><ol><li>انسخ البرومبت؛ تخصصك ورابط بورتفوليوك متضافين من ملفك.</li><li>ابعت الـCV الحالي مع البرومبت لأداة الذكاء الاصطناعي اللي بتستخدمها، واسمح لها بمراجعة البورتفوليو أو شارك نصوصه لو الرابط مش متاح لها.</li><li>راجع الاقتراحات والنسخة المعدّلة بنفسك، وارفع الـCV الجديد من الزر هنا.</li><li>اضغط تم بعد الرفع. وقتها تفتح تحليلات الأداء وتبدأ فترة متابعة جديدة من غير تغيير الطلبات القديمة.</li></ol>",
+    "contentEn": "<h3>Make your value understandable</h3><p>A technical reviewer needs evidence of your ability and decisions; a business reviewer needs to understand the problem you can help solve. Connect three layers without exaggeration.</p><ol><li><strong>Skills:</strong> relevant capabilities supported by a real project, training or work example.</li><li><strong>Useful solutions:</strong> explain who benefits and how. A workflow, interface, test plan, dashboard or part of a CRM/ERP may fit your specialization; do not claim ownership of a whole system you did not build.</li><li><strong>User and business impact:</strong> fewer errors, less time, better experience or performance, supported sales, or faster delivery. Use numbers only with evidence. Label unmeasured goals as goals.</li></ol><p>Use the prompt with your current CV and portfolio. Review the revision, upload a genuinely updated CV below, then confirm completion to unlock analytics. Earlier applications remain linked to their original observation period.</p>",
+    "promptTemplateAr": "أنت مراجع توظيف وسير ذاتية متخصص في {{specialization}}، وتقدر تشرح القيمة لشخص تقني ولشخص من البزنس.\nتخصصي من ملف نواة: {{specialization}}\nرابط البورتفوليو من ملفي: {{portfolioUrl}}\nسأرفق الـCV الحالي بهذه الرسالة. لا تبدأ قبل قراءة المرفق؛ لو لم يصل اطلبه مني. راجع البورتفوليو إن استطعت فتحه، وإلا اطلب نصوص/صور المشاريع ولا تدّعي أنك قرأته.\nراجع السيرة والبورتفوليو معًا وفق: المهارات → حلول مفيدة للمستخدم → أثر على البزنس.\n1) قيّم كل جانب من 5 مع دليل من المواد المتاحة، وافصل بين نقص المعلومات وضعف الخبرة. وضّح أهم التعديلات وأسبابها بترتيب الأولوية.\n2) اختر أمثلة تناسب تخصصي، واشرح كيف تتحول مهاراتي إلى تجربة/خدمة/نظام مفيد؛ استخدم CRM أو ERP فقط إذا كانت خبرتي تدعم ذلك.\n3) أعد صياغة الملخص والخبرات والمشاريع لتربط قراراتي ومساهمتي بالمستخدم والنتيجة، بلغة يفهمها التقني والبزنس، مع تنسيق واضح ومتوافق مع ATS.\n4) لا تخترع أدوات أو خبرات أو أرقامًا أو أثرًا ماليًا. اسألني عما ينقصك قبل إضافة ادعاء، وميّز بين نتيجة متحققة وهدف متوقع.\n5) بعد إجاباتي، قدّم نسخة CV منقّحة كاملة جاهزة للمراجعة؛ إن كانت أداتك تدعم الملفات أرفق نسخة قابلة للتنزيل، وإلا قدّم النص المنسق. اختم بقائمة تحقق لما يجب أن أراجعه قبل رفع النسخة الجديدة في نواة.",
+    "promptTemplateEn": "Act as a hiring and CV reviewer for {{specialization}}. Explain value to both technical and business readers.\nMy profile specialization: {{specialization}}\nMy profile portfolio URL: {{portfolioUrl}}\nI will attach my current CV. Ask for it if missing. Review the portfolio if accessible; otherwise request project text/screenshots and do not claim to have read it.\nAssess skills → useful user solutions → business impact. Score each layer out of 5 with evidence; distinguish missing information from lack of experience. Prioritize concrete corrections.\nUse examples appropriate to my specialization; mention CRM/ERP only where supported. Rewrite the summary, experience and projects to explain my contribution, decisions, users and outcomes clearly, with ATS-friendly structure. Never invent experience, tools, metrics or financial outcomes. Ask for missing evidence and distinguish achieved results from intended benefits.\nAfter my answers, provide a complete revised CV for review. Attach a downloadable file if your tool supports files, otherwise provide formatted text. End with a checklist before I upload the updated CV in Nawah."
   },
   {
-    code: 'INSIGHT_W1_INTERVIEW_BASIC',
-    weekNumber: 1,
-    titleAr: 'الدليل الأساسي للتحضير السريع للمقابلات الأولى',
-    titleEn: 'Core Guide: Rapid Preparation for First-Round Interviews',
-    summaryAr:
-      'إطار عمل عملي من 4 خطوات للتحضير لأي مقابلة تعارف أو فحص هاتفي (Screening Call) خلال 30 دقيقة بثقة عالية.',
-    summaryEn:
-      'A practical 4-step framework to prepare for any HR screening or first-round interview in 30 minutes.',
-    promptTemplateAr: `أنت مدير توظيف في شركة تقنية. لدي مقابلة أولى على وظيفة [المسمى الوظيفي] في شركة [اسم الشركة].
-هذا هو الوصف الوظيفي:
-[الصق الوصف الوظيفي هنا]
-
-المطلوب:
-1. صياغة إجابة مثالية لسؤال "حدثني عن نفسك" في 90 ثانية تربط خبرتي بالوظيفة.
-2. توقع أهم 5 أسئلة فنية وسلوكية قد تُطرح في المكالمة الأولى مع نقاط الإجابة النموذجية.
-3. اقتراح 3 أسئلة ذكية أطرحها في نهاية المقابلة لإظهار اهتمامي الحقيقي.`,
-    promptTemplateEn: `Act as a Hiring Manager. I have a first-round interview for [Job Title] at [Company Name].
-Job Description:
-[Paste Job Description]
-
-Please:
-1. Craft a 90-second "Tell me about yourself" pitch connecting my background to this role.
-2. Predict the top 5 screening questions (technical & behavioral) with key talking points.
-3. Give me 3 insightful questions to ask the interviewer at the end.`,
+    "code": "INSIGHT_W1_INTERVIEW_BASIC",
+    "weekNumber": 1,
+    "titleAr": "المقابلة والتكليف العملي: اشرح مهاراتك والحل وأثره",
+    "titleEn": "Interviews and assignments: explain your skills, solution and impact",
+    "summaryAr": "تدرّب على شرح قدراتك، مين المستفيد من شغلك، وليه نتيجته مهمة للبزنس. جهّز تقديمك وأمثلتك وخطة التكليف ورسائل التسليم حسب تخصصك.",
+    "summaryEn": "Practice explaining your capabilities, who benefits and why the result matters. Prepare your introduction, examples, assignment plan and delivery messages for your specialization.",
+    "contentAr": "<h3>خيط واحد للمقابلة والتكليف</h3><p>ما تكتفيش بذكر الأدوات. اشرح مهارتك، والحل اللي استخدمتها فيه، وإزاي ده خدم المستخدم أو الفريق والبزنس. استخدم أمثلة حقيقية من تخصصك؛ مش لازم المثال يكون مشروعًا ضخمًا أو إنجازًا ماليًا.</p><h3>في المقابلة</h3><ul><li>جهّز تقديمًا من 60–90 ثانية يربط تخصصك بمشكلة الوظيفة.</li><li>اختار مثالين: المشكلة، دورك وقرارك، الحل، النتيجة وما تعلمته. ميّز دورك عن دور الفريق.</li><li>تدرّب على نفس المثال بصيغتين: تفاصيل وقرارات لشخص تقني، وقيمة وحدود واضحة لشخص من البزنس.</li><li>اسأل عن المستخدمين ومعايير النجاح وأولويات الفريق. لو ما تعرفش إجابة، وضّح طريقة بحثك بدل اختراعها.</li></ul><h3>في التكليف العملي (Assignment)</h3><ul><li>افهم المطلوب ومعيار التقييم والوقت المتاح. اسأل عن أي غموض قبل التنفيذ.</li><li>قسّم المطلوب لنتيجة أساسية تعمل، ثم تحسينات لو الوقت يسمح. وضّح الافتراضات والحدود.</li><li>قدّم طريقة استخدام/تشغيل أو عرض مناسب لتخصصك، واختبارات أو تحققًا من الجودة، واشرح القرارات المهمة.</li><li>في رسالة التسليم: ما أنجزته، فائدته للمستخدم، صلته بهدف البزنس، طريقة مراجعته، وما يحتاج متابعة. لا تدّعِ اختبارًا أو نتيجة لم تتحقق.</li></ul><p>البرومبت التالي يحوّل سيرتك والبورتفوليو والوصف الوظيفي لتدريب تفاعلي. هذه الإرشادات تُستكمل بزر القراءة العادي؛ لا تحتاج رفع CV جديد.</p>",
+    "contentEn": "<h3>One thread for interviews and assignments</h3><p>Explain your skill, the solution you used it in, and why it helped users or the business. Use real examples appropriate to your specialization.</p><h3>Interviews</h3><p>Prepare a 60–90 second introduction and two stories covering the problem, your contribution and decisions, the result and lessons. Practice a technical version and a business-friendly version. Ask about users, success criteria and priorities; acknowledge unknowns.</p><h3>Practical assignments</h3><p>Clarify the brief, evaluation criteria and available time. Prioritize a working core result; document assumptions, decisions, quality checks and limitations. Your delivery message should explain what works, who benefits, how to review it and what remains. Never claim unperformed tests or unsupported outcomes. Use the prompt for interactive practice. Normal reading confirmation completes this guide; no new CV upload is required.</p>",
+    "promptTemplateAr": "أنت مدرب مقابلات ومقيّم تكليفات عملية لتخصص {{specialization}}.\nتخصصي من ملف نواة: {{specialization}}\nبورتفوليوي: {{portfolioUrl}}\nسأرفق سيرتي، ثم أرسل الوصف الوظيفي أو نص التكليف إن وُجد. اطلب المواد الناقصة. لا تدّعي قراءة رابط لا تستطيع فتحه.\nدرّبني على توصيل 3 جوانب: قدراتي ومهاراتي → الحل المفيد للمستخدم → أثره على البزنس، بأمثلة من تخصصي وخبرتي الحقيقية فقط.\nابدأ بسؤال واحد لتفهم الوظيفة، ثم:\n1) ساعدني أصيغ تقديمًا مدته 60–90 ثانية، ومثالين واقعيين يوضحان دوري وقراراتي والنتائج والحدود.\n2) اعمل مقابلة تجريبية بسؤال واحد في كل مرة، تشمل التقني والسلوكي والبزنس. بعد إجابتي قيّم الوضوح والدليل وفهم المستخدم والأثر، ثم اقترح تحسينًا واطلب مني المحاولة مجددًا.\n3) أعطني تكليفًا تدريبيًا مناسبًا لمستواي وتخصصي، مع وقت مقترح ومعايير تقييم واضحة. ساعدني أفهم المطلوب وأسأل عن الغموض وأخطط للتنفيذ والتحقق من الجودة.\n4) راجع الحل الذي أقدمه دون اختراع تجربة أو قياس، ودرّبني على شرحه لشخص تقني ولشخص من البزنس.\n5) جهّز معي رسائل قصيرة لتوضيح متطلبات التكليف، وتأكيد موعد التسليم، وتسليم النتيجة بروابطها وطريقة مراجعتها وحدودها. لا تقدّم التدريب كحل مكتمل لتقييم توظيف فعلي يطلب عملًا مستقلًا مني.",
+    "promptTemplateEn": "Act as an interview coach and practical-assignment reviewer for {{specialization}}.\nMy profile specialization: {{specialization}}\nMy portfolio: {{portfolioUrl}}\nI will attach my CV and share the job description or assignment brief. Ask for missing material. Do not claim to have read inaccessible links.\nTrain me to connect capabilities → a useful user solution → business impact, using my real experience and appropriate examples.\nAsk one context question first. Then help prepare a 60–90 second introduction and two evidence-backed stories; run a mock interview one question at a time, assessing clarity, evidence, user understanding and impact after each answer.\nSet a practice assignment suitable for my role and level with time guidance and evaluation criteria. Help clarify requirements, plan, verify quality and explain decisions to technical and business reviewers. Review my work without inventing tests or results.\nPractice concise clarification, scheduling and delivery messages covering links, review instructions, value and limitations. Distinguish coaching from completing an actual hiring assessment that requires my independent work."
   },
   {
     code: 'INSIGHT_W1_TAILORED_CV',

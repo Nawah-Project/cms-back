@@ -15,6 +15,12 @@ import { ApplicationOutcome } from '../enums/application-outcome.enum';
 
 export class ApplicationQueryDto {
   @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  cvVersion?: number;
+
+  @IsOptional()
   @IsDateString({ strict: true })
   createdFrom?: string;
 

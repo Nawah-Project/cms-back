@@ -27,6 +27,7 @@ import {
   reportMetrics,
 } from './reporting.util';
 import { createHash } from 'node:crypto';
+import { cvFoundationStatus, CV_FOUNDATION_CODE } from './cv-foundation.util';
 import { persistProfessionalChange } from './professional-change.util';
 import { isWeeklyReflection, professionalTasksUnlocked } from './journey-rules';
 import { GroupAssignmentService } from '../members/group-assignment.service';
@@ -77,7 +78,8 @@ export interface JourneyStateResponse {
   currentWeekNodes: EnrichedJourneyNode[];
   nodes: EnrichedJourneyNode[];
   weeklyStats: WeeklyConversionStats;
-  features: { groups: boolean; tableView: boolean; professionalTasks: boolean };
+  features: { groups: boolean; tableView: boolean; professionalTasks: boolean; analytics: boolean };
+  cvFoundation: ReturnType<typeof cvFoundationStatus>;
 }
 
 export interface JobMarketCompassPlatform {
@@ -463,6 +465,7 @@ export class JourneyEngineService implements OnModuleInit {
       return state;
     }
 
+    if (currentNode.weekNumber === 1 && currentNode.nodeType === JourneyNodeType.MAIN_QUEST && !(await this.getCvFoundation(userId, state)).completed) return state;
     const counts = await this.getCurrentNodeCounts(userId, state, currentNode);
 
     const appsSatisfied = counts.appsCount >= currentNode.requiredAppsCount;
@@ -556,9 +559,9 @@ export class JourneyEngineService implements OnModuleInit {
         titleAr: 'إرشاداتك المهنية الأولى متاحة!',
         titleEn: 'Professional Development Unlocked!',
         bodyAr:
-          'أكملت المهمة صفر! إرشادات السيرة الذاتية متاحة؛ المهام المهنية بتتفتح بعد إرشاد تنظيم الوقت في الأسبوع الثالث.',
+          'أكملت المهمة صفر! تعرّف على مجموعتك، ثم افتح إرشاد تحسين السيرة وارفع النسخة المحدّثة لفتح تحليل الأداء.',
         bodyEn:
-          'Task 0 completed! Initial CV guidance is available. Professional tasks unlock after reading Week 3 time-management guidance.',
+          'Task 0 completed! Meet your group, then follow the CV guidance and upload your updated CV to unlock analytics.',
         actionUrl: '/professional-development',
       });
     }
@@ -618,6 +621,7 @@ export class JourneyEngineService implements OnModuleInit {
         currentNodeStartedAt: now,
         weekStartedAt,
         week1StartedAt,
+        ...(currentNode.code === 'TASK_0' && state.cvFoundationBaselineVersion == null ? { cvFoundationBaselineVersion: state.cvVersionNumber ?? 1 } : {}),
       },
     });
 
@@ -679,8 +683,8 @@ export class JourneyEngineService implements OnModuleInit {
     }
 
     if (!hasReadBasic) {
-      // Exceptionally unlock INSIGHT_W1_INTERVIEW_BASIC early
       const state = await this.getOrCreateUserState(userId);
+      if (!(state.completedNodeCodes ?? []).includes('W1_M2')) return;
       const currentUnlocked = state.unlockedInsightCodes ?? [];
       if (!currentUnlocked.includes('INSIGHT_W1_INTERVIEW_BASIC')) {
         const nextUnlocked = Array.from(
@@ -878,6 +882,13 @@ export class JourneyEngineService implements OnModuleInit {
     return { submission, journeyState };
   }
 
+  private async getCvFoundation(userId: string, state: UserJourneyState) {
+    const known = cvFoundationStatus(state);
+    if (!known.unlocked || known.completed) return known;
+    const latest = await this.prisma.userCvHistory.findFirst({ where: { userId }, orderBy: { versionNumber: 'desc' }, select: { versionNumber: true, uploadedAt: true } });
+    return cvFoundationStatus(state, latest ? [latest] : []);
+  }
+
   async markInsightRead(userId: string, code: string): Promise<UserJourneyState> {
     const state = await this.getOrCreateUserState(userId);
     if (!(state.unlockedInsightCodes ?? []).includes(code)) throw new ForbiddenException('Complete the required quest to unlock this guidance');
@@ -887,16 +898,21 @@ export class JourneyEngineService implements OnModuleInit {
         { visibility: 'GROUP', group: { memberships: { some: { userId } } } }],
     }, orderBy: [{ publishedAt: 'desc' }, { id: 'desc' }] });
     if (!post && !JOURNEY_GUIDANCE_CATALOG.some((item) => item.code === code)) throw new ForbiddenException('Guidance is unavailable for this participant');
+    if (code === CV_FOUNDATION_CODE) {
+      const foundation = await this.getCvFoundation(userId, state);
+      if (!foundation.canComplete) throw new BadRequestException({ code: 'CV_UPDATE_REQUIRED', message: 'Upload your updated CV after completing Task 0 before confirming this guidance' });
+    }
     // Atomic append is conditional, so concurrent retries cannot duplicate read codes.
     await this.prisma.userJourneyState.updateMany({
       where: { userId, NOT: { readInsightCodes: { has: code } } },
-      data: { readInsightCodes: { push: code } },
+      data: { readInsightCodes: { push: code }, ...(code === CV_FOUNDATION_CODE ? { cvFoundationCompletedAt: new Date() } : {}) },
     });
     if (post) await this.prisma.feedbackRead.upsert({
       where: { feedbackId_userId: { feedbackId: post.id, userId } },
       create: { feedbackId: post.id, userId }, update: {},
     });
     await this.evaluateInterviewGuidanceUnlocks(userId);
+    if (code === CV_FOUNDATION_CODE) await this.evaluateProgress(userId);
     return this.getOrCreateUserState(userId);
   }
 
@@ -1026,9 +1042,12 @@ export class JourneyEngineService implements OnModuleInit {
     const totalApplications = metrics.logged, tailoredApplications = metrics.tailored;
     const interviewsOrResponses = metrics.positive, conversionRate = metrics.positiveRate ?? 0;
 
+    const foundation = await this.getCvFoundation(userId, state);
     return {
       state,
+      cvFoundation: foundation,
       features: {
+        analytics: foundation.completed,
         groups: (state.completedNodeCodes ?? []).includes('TASK_0') || state.currentWeek >= 1,
         tableView: state.canUseTableView,
         professionalTasks: professionalTasksUnlocked(state.currentWeek, state.readInsightCodes ?? []),
@@ -1139,6 +1158,10 @@ export class JourneyEngineService implements OnModuleInit {
         weekStartedAt: null,
       };
 
+      if (!adminPreview && !cvFoundationStatus(state, cvs).completed) {
+        const account = await tx.user.findUnique({ where: { id: userId }, select: { role: true } });
+        if (account?.role !== 'ADMIN') throw new ForbiddenException({ code: 'CV_FOUNDATION_REQUIRED', guidanceUnlocked: (state.completedNodeCodes as string[]).includes('TASK_0') || state.currentWeek >= 1, message: 'Complete the CV guidance with an updated CV to unlock performance analytics' });
+      }
       return buildReportsPayload({
         applications,
         activities,
@@ -1394,7 +1417,7 @@ export class JourneyEngineService implements OnModuleInit {
         title: dbPost?.title ?? seed.titleAr,
         titleAr: seed.titleAr,
         titleEn: seed.titleEn,
-        content: dbPost?.content ?? seed.summaryAr,
+        content: dbPost?.content ?? seed.contentAr ?? seed.summaryAr,
         summaryAr: seed.summaryAr,
         summaryEn: seed.summaryEn,
         promptTemplate: dbPost?.promptTemplate ?? seed.promptTemplateAr,
@@ -1479,7 +1502,7 @@ export class JourneyEngineService implements OnModuleInit {
       data: {
         authorId,
         title: dto.title?.trim() || seed?.titleAr || code,
-        content: dto.content?.trim() || seed?.summaryAr || '',
+        content: dto.content?.trim() || seed?.contentAr || seed?.summaryAr || '',
         promptTemplate:
           dto.promptTemplate?.trim() || seed?.promptTemplateAr || '',
         visibility: 'ALL',

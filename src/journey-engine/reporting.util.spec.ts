@@ -37,7 +37,7 @@ describe('admin report preview demo fixture', () => {
       reflectionRecorded: false,
     });
     expect(report.weeklyStages.find((week) => week.week === 2)?.nextStage?.titleEn).toContain('Week 3');
-    expect(report.readGuidance.map((item) => item.titleEn)).toContain('Insight 0: Building Your ATS-Ready Base CV');
+    expect(report.readGuidance.map((item) => item.titleEn)).toContain('Skills, useful solutions and impact: improve your CV');
   });
 
   it('provides deterministic DTO-compatible scenarios without touching persistence', () => {

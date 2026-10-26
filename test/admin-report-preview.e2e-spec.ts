@@ -6,6 +6,7 @@ import request from 'supertest';
 import { UserRole } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { JourneyEngineService } from '../src/journey-engine/journey-engine.service';
 import { prepareProgramMember } from './program-fixture';
 import { resetTestDatabase } from './reset-test-database';
 
@@ -13,6 +14,7 @@ describe('Admin report preview (disposable PostgreSQL e2e)', () => {
   let app: NestExpressApplication;
   let server: ReturnType<NestExpressApplication['getHttpServer']>;
   let prisma: PrismaService;
+  let journey: JourneyEngineService;
   const previousAssignment = process.env.ASSIGN_GROUP_ON_REGISTER;
 
   beforeAll(async () => {
@@ -21,6 +23,7 @@ describe('Admin report preview (disposable PostgreSQL e2e)', () => {
     process.env.ASSIGN_GROUP_ON_REGISTER = 'false';
     const module = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = module.get(PrismaService);
+    journey = module.get(JourneyEngineService);
     await resetTestDatabase(prisma);
     app = module.createNestApplication<NestExpressApplication>();
     app.use(cookieParser());
@@ -48,7 +51,7 @@ describe('Admin report preview (disposable PostgreSQL e2e)', () => {
       .post('/auth/register')
       .send({
         name: `Report preview ${key}`,
-        email: `${key}@report-preview.example.com`,
+        email: `${key}@example.com`,
         password: 'SecurePass123!',
       })
       .expect(201);
@@ -137,5 +140,28 @@ describe('Admin report preview (disposable PostgreSQL e2e)', () => {
       .get('/journey/reports')
       .expect(200);
     expect(normalMemberReport.body.weeks).toEqual(actual.body.report.weeks);
+    expect(
+      await prisma.userJourneyState.findUniqueOrThrow({
+        where: { userId: member.userId },
+      }),
+    ).toEqual(stateBefore);
+    expect(
+      await prisma.application.count({ where: { userId: member.userId } }),
+    ).toBe(applicationsBefore);
+  });
+
+  it('serves an empty report read without creating journey state', async () => {
+    const member = await register('without-journey-state');
+    await prisma.userJourneyState.deleteMany({ where: { userId: member.userId } });
+
+    const report = await journey.getReports(member.userId);
+
+    expect(report.overall.logged).toBe(0);
+    expect(report.currentNodeCode).toBe('TASK_0');
+    expect(
+      await prisma.userJourneyState.findUnique({
+        where: { userId: member.userId },
+      }),
+    ).toBeNull();
   });
 });

@@ -23,16 +23,23 @@ export function applicationEvidence(app: ReportApplication) {
 export function reportMetrics(apps: ReportApplication[]) {
   let tailored=0, positive=0, interviews=0, assignments=0, unknownInterviews=0;
   let rejected=0, withdrawn=0, noResponse=0, accepted=0;
+  let decisions=0;
+  const stages = { APPLIED: 0, ASSIGNMENT: 0, INTERVIEW: 0, DECISION: 0, CLOSED: 0 };
+  const outcomes = { NONE: 0, ACCEPTED: 0, REJECTED: 0, WITHDRAWN: 0, NO_RESPONSE: 0 };
   for(const app of apps) {
     const e=applicationEvidence(app);
     tailored+=Number(app.isTailored); positive+=Number(e.positive);
     interviews+=Number(e.interview); assignments+=Number(e.assignment); unknownInterviews+=Number(e.unknownInterview);
+    if (app.stage in stages) stages[app.stage as keyof typeof stages]++;
+    if (app.outcome in outcomes) outcomes[app.outcome as keyof typeof outcomes]++;
+    decisions+=Number(app.stage === 'DECISION' || app.outcome === 'ACCEPTED' || app.transitions.some(t => t.fromStage === 'DECISION' || t.toStage === 'DECISION'));
     rejected+=Number(app.outcome==='REJECTED'); withdrawn+=Number(app.outcome==='WITHDRAWN');
     noResponse+=Number(app.outcome==='NO_RESPONSE'); accepted+=Number(app.outcome==='ACCEPTED');
   }
   return { logged:apps.length, tailored, positive, interviews, assignments, unknownInterviews,
     rejected, withdrawn, noResponse, accepted,
-    positiveRate: apps.length ? Math.round(positive/apps.length*10000)/100 : null };
+    positiveRate: apps.length ? Math.round(positive/apps.length*10000)/100 : null,
+    stages, outcomes, milestones: { assignments, interviews, decisions } };
 }
 export function isJourneyComplete(codes: readonly string[]) { return codes.includes('FINAL_REPORT'); }
 
@@ -66,6 +73,7 @@ export interface ReportStateInput {
   completedNodeCodes: string[];
   currentNodeCode: string;
   currentWeek: number;
+  week1StartedAt?: Date | null;
 }
 
 export function buildReportsPayload(input: {
@@ -76,6 +84,7 @@ export function buildReportsPayload(input: {
   state: ReportStateInput;
   asOf?: Date;
 }) {
+  const asOf = input.asOf ?? new Date();
   const activityCounts = (week?: number) => {
     const rows = input.activities.filter(
       (activity) => week === undefined || activity.journeyWeek === week,
@@ -113,8 +122,42 @@ export function buildReportsPayload(input: {
     }
   }
 
+  // Periods group applications by their creation timestamps between persisted
+  // CV uploads and explicit USER_CHANGE records. Outcomes are current as-of
+  // this snapshot and are not attributed to the checkpoint.
+  const checkpoints = [
+    ...input.cvs.map(cv => ({ kind: 'CV' as const, title: `CV v${cv.versionNumber}`, at: cv.uploadedAt })),
+    ...input.activities.filter(activity => activity.type === 'USER_CHANGE').map((activity, index) => ({
+      kind: 'USER_CHANGE' as const, title: `Manual change ${index + 1}`, at: activity.createdAt,
+    })),
+  ].sort((a, b) => a.at.getTime() - b.at.getTime() || a.kind.localeCompare(b.kind));
+  const periodComparisons: {
+    id: string;
+    kind: 'BEFORE_FIRST_CHECKPOINT' | 'CV' | 'USER_CHANGE';
+    title: string;
+    startAt: Date;
+    endAt: Date | null;
+    metrics: ReturnType<typeof reportMetrics>;
+  }[] = [];
+  if (checkpoints.length) {
+    const firstAt = checkpoints[0].at;
+    const before = input.applications.filter(app => app.createdAt < firstAt);
+    if (before.length) {
+      const startAt = before.reduce((earliest, app) => app.createdAt < earliest ? app.createdAt : earliest, before[0].createdAt);
+      periodComparisons.push({ id: 'before-first-checkpoint', kind: 'BEFORE_FIRST_CHECKPOINT', title: 'Before first recorded checkpoint', startAt, endAt: firstAt, metrics: reportMetrics(before) });
+    }
+    checkpoints.forEach((checkpoint, index) => {
+      const next = checkpoints[index + 1];
+      const cohort = input.applications.filter(app => app.createdAt >= checkpoint.at && (!next || app.createdAt < next.at));
+      periodComparisons.push({
+        id: `checkpoint-${index + 1}`, kind: checkpoint.kind, title: checkpoint.title,
+        startAt: checkpoint.at, endAt: next?.at ?? null, metrics: reportMetrics(cohort),
+      });
+    });
+  }
+
   return {
-    asOf: input.asOf ?? new Date(),
+    asOf,
     overall: {
       ...reportMetrics(input.applications),
       ...activityCounts(),
@@ -127,6 +170,7 @@ export function buildReportsPayload(input: {
       ...activityCounts(week),
     })),
     daily: [...days.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    periodComparisons,
     cvs: input.cvs,
     tasks: input.tasks,
     activities: input.activities.map((activity) => ({
@@ -147,6 +191,7 @@ export function buildReportsPayload(input: {
     completedNodeCodes: input.state.completedNodeCodes,
     currentNodeCode: input.state.currentNodeCode,
     currentWeek: input.state.currentWeek,
+    week1StartedAt: input.state.week1StartedAt ?? null,
     finalAvailable: input.state.currentNodeCode === 'FINAL_REPORT',
     completed: isJourneyComplete(input.state.completedNodeCodes),
   };

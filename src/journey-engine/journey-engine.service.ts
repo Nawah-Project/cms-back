@@ -1070,9 +1070,8 @@ export class JourneyEngineService implements OnModuleInit {
   }
 
   async getReports(userId: string) {
-    // Preserve the existing member endpoint behavior. Only the Admin preview
-    // bypasses this initializer and reads a missing state as an empty default.
-    await this.getOrCreateUserState(userId);
+    // Reports are a pure read; a missing state is represented by the empty
+    // baseline below rather than initialized by a GET request.
     return this.readReportsSnapshot(userId, false);
   }
 
@@ -1115,9 +1114,6 @@ export class JourneyEngineService implements OnModuleInit {
           tx.userJourneyState.findUnique({ where: { userId } }),
         ]);
 
-      if (!persistedState && !adminPreview) {
-        throw new NotFoundException('Journey state not found');
-      }
       const state = persistedState ?? {
         readInsightCodes: [],
         completedNodeCodes: [],

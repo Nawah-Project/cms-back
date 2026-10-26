@@ -1,6 +1,6 @@
 # نواة — تنفيذ إعادة تصميم Performance Analytics والتقارير الأسبوعية
 
-**الحالة:** التنفيذ والاختبارات المركزة اكتملوا على فرعي عمل؛ **لم يتم النشر**.
+**الحالة:** التنفيذ والاختبارات المركزة اكتملوا على فرعي عمل قبل الإطلاق؛ تفاصيل النشر الحالي في [تقرير الإصدار](/data/cms/NAWAH_ANALYTICS_REDESIGN_PRODUCTION_RELEASE.md).
 **Frontend:** `/data/cms/production-release/cms-front` — `feature/analytics-redesign`
 **Backend:** `/data/cms/production-release/cms-back` — `feature/analytics-redesign`
 **Commits:** Frontend `b9ad1ff`؛ Backend `0a8e3f9`؛ تقارير التنفيذ والقبول في commit التوثيق بكل مستودع.
@@ -107,4 +107,4 @@
 - لم أجرِ benchmark كبيرًا؛ التجميع الحالي مناسب لمرحلة MVP الصغيرة كما في Phase 2.
 - ظهر في تثبيت frontend عدد **2 high severity advisories**. لم أعمل audit fix أو تغييرات dependency غير مطلوبة؛ راجع advisories قبل الإصدار.
 
-الفرعان مبنيان ومختبران وجاهزان **لمراجعة الكود وVisual QA**. النشر يحتاج دمج/بناء النسختين المتوافقتين معًا ومراجعة هذه النتائج أولًا. لا migration مطلوبة، لكن هذا التقرير لا يمنح تصريح نشر تلقائيًا. لم يتغير production runtime أو البيانات أو الصور.
+وقت كتابة الجزء ده كان الفرعان جاهزين لمراجعة الكود وVisual QA ولم يكونا منشورين. بعد ذلك تم نشرهما معًا على البيئة الموجودة. لا migration مطلوبة؛ الـBrowser visual acceptance ما زالت مطلوبة بعد النشر.

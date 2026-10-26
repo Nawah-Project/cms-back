@@ -3,7 +3,7 @@
 **الحالة:** قبول هندسي آلي مبدئي؛ **القبول البصري غير مكتمل**.
 **الفرعان:** `feature/analytics-redesign` في `cms-front` و`cms-back`.
 **Commits التنفيذ:** Frontend `b9ad1ff`؛ Backend `0a8e3f9`.
-**النشر:** لم يتم. الاختبارات استخدمت بيانات وقاعدة اختبار فقط.
+**النشر وقت تنفيذ الفحص:** لم يكن قد تم. الإصدار نُشر لاحقًا؛ راجع [تقرير النشر](/data/cms/NAWAH_ANALYTICS_REDESIGN_PRODUCTION_RELEASE.md). الاختبارات هنا استخدمت بيانات وقاعدة اختبار فقط.
 
 ## 1. بيئة الفحص
 
@@ -58,6 +58,6 @@
 
 ## 6. قرار القبول
 
-**القرار الحالي: SOURCE-READY FOR REVIEW؛ NOT VISUALLY ACCEPTED؛ NOT DEPLOYED.**
+**نتيجة القبول:** SOURCE-READY FOR REVIEW؛ NOT VISUALLY ACCEPTED. تم النشر لاحقًا لبدء live Browser QA.
 
-الاختبارات والبناء يثبتوا السلوك المغطى فقط. لا أوصي باعتبار التصميم مقبولًا بصريًا قبل تنفيذ checklist أعلاه، ومراجعة تقرير dependency advisories. مفيش migration schema مطلوبة ولا بيانات production تغيرت. يمكن تجهيز release بعد مراجعة الكود ونتائج الـbrowser، من غير استخدام هذا المستند كإذن نشر تلقائي.
+الاختبارات والبناء يثبتوا السلوك المغطى فقط. لا تعتبر التصميم مقبولًا بصريًا قبل تنفيذ checklist أعلاه. الإصدار الحالي منشور على الإنتاج من غير migration schema أو تغيير بيانات، وتفاصيله في تقرير النشر. هذا المستند لا يثبت Browser acceptance.

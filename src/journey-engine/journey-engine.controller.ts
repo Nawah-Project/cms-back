@@ -108,6 +108,21 @@ export class NotificationsController {
 export class AdminJourneyController {
   constructor(private readonly journeyEngine: JourneyEngineService) {}
 
+  @Get('reports/demo')
+  getDemoReportPreview() {
+    return { mode: 'DEMO' as const, report: this.journeyEngine.getDemoReports() };
+  }
+
+  @Get('reports/:userId')
+  async getUserReportPreview(
+    @Param('userId', new ParseUUIDPipe()) userId: string,
+  ) {
+    return {
+      mode: 'ACTUAL' as const,
+      report: await this.journeyEngine.getAdminReportPreview(userId),
+    };
+  }
+
   @Get('nodes')
   getNodes() {
     return this.journeyEngine.getAdminJourneyNodes();

@@ -19,7 +19,12 @@ import {
   UserJourneyState,
   Prisma,
 } from '@prisma/client';
-import { reportApplicationSelect, reportMetrics } from './reporting.util';
+import {
+  buildDemoReports,
+  buildReportsPayload,
+  reportApplicationSelect,
+  reportMetrics,
+} from './reporting.util';
 import { createHash } from 'node:crypto';
 import { isWeeklyReflection, professionalTasksUnlocked } from './journey-rules';
 import { GroupAssignmentService } from '../members/group-assignment.service';
@@ -1038,39 +1043,95 @@ export class JourneyEngineService implements OnModuleInit {
     };
   }
 
+  getDemoReports() {
+    // The deterministic fixture is calculated in memory and never touches Prisma.
+    return buildDemoReports();
+  }
+
+  async getAdminReportPreview(userId: string) {
+    const report = await this.readReportsSnapshot(userId, true);
+    // Match existing Admin detail permissions: keep report counts and dates,
+    // but do not disclose private CV filenames, reflections, or contact info.
+    return {
+      ...report,
+      cvs: report.cvs.map((cv) => ({
+        ...cv,
+        originalName: `CV v${cv.versionNumber}`,
+      })),
+      activities: report.activities.map((activity) => ({
+        ...activity,
+        summary: null,
+        postUrl: null,
+        postTopic: null,
+        contactName: null,
+        companyName: null,
+      })),
+    };
+  }
+
   async getReports(userId: string) {
+    // Preserve the existing member endpoint behavior. Only the Admin preview
+    // bypasses this initializer and reads a missing state as an empty default.
     await this.getOrCreateUserState(userId);
+    return this.readReportsSnapshot(userId, false);
+  }
+
+  private async readReportsSnapshot(userId: string, adminPreview: boolean) {
     // One repeatable snapshot: all owned rows, no client pagination limit.
-    return this.prisma.$transaction(async tx => {
-      const apps = await tx.application.findMany({ where: { userId }, select: reportApplicationSelect });
-      const activities = await tx.sideTaskSubmission.findMany({ where: { userId }, orderBy: { createdAt: 'asc' } });
-      const cvs = await tx.userCvHistory.findMany({ where: { userId }, orderBy: [{ uploadedAt: 'asc' }, { versionNumber: 'asc' }],
-        select: { id: true, versionNumber: true, originalName: true, uploadedAt: true } });
-      const tasks = await tx.task.findMany({ where: { userId, status: 'DONE' }, select: { id: true, title: true, completedAt: true } });
-      const snapshot = await tx.userJourneyState.findUniqueOrThrow({ where: { userId } });
-      const activityCounts = (week?: number) => {
-        const rows=activities.filter(a => week === undefined || a.journeyWeek===week);
-        return { posts:rows.filter(a=>a.type==='LINKEDIN_POST').length,
-          outreach:rows.filter(a=>a.type==='OUTREACH_CONTACT').length,
-          reviews:rows.filter(a=>a.type==='WEEKLY_REVIEW' && isWeeklyReflection(a.reviewSummary)).length };
-      };
-      const days = new Map<string, {date:string;logged:number;positiveEvents:number}>();
-      const day = (date:Date) => { const key=date.toISOString().slice(0,10);if(!days.has(key))days.set(key,{date:key,logged:0,positiveEvents:0});return days.get(key)!; };
-      for (const app of apps) {
-        day(app.createdAt).logged++;
-        // Events are actual transition dates, including late responses to earlier cohorts.
-        for(const t of app.transitions) if(['ASSIGNMENT','INTERVIEW','DECISION'].includes(t.toStage) || t.outcome==='ACCEPTED') day(t.changedAt).positiveEvents++;
+    // This method itself is read-only; adminPreview also never initializes state.
+    return this.prisma.$transaction(async (tx) => {
+      if (adminPreview) {
+        const user = await tx.user.findFirst({
+          where: { id: userId, role: 'USER' },
+          select: { id: true },
+        });
+        if (!user) throw new NotFoundException('User not found');
       }
-      return { asOf:new Date(), overall:{...reportMetrics(apps),...activityCounts()},
-        weeks:[0,1,2,3,4].map(week=>({week,...reportMetrics(apps.filter(a=>a.journeyWeek===week)),...activityCounts(week)})),
-        daily:[...days.values()].sort((a,b)=>a.date.localeCompare(b.date)),
-        cvs, tasks, activities:activities.map(a=>({id:a.id,week:a.journeyWeek,type:a.type,summary:a.reviewSummary,
-          postUrl:a.postUrl,postTopic:a.postTopic,contactName:a.contactName,companyName:a.companyName,createdAt:a.createdAt,
-          legacyChange:a.type==='WEEKLY_REVIEW' && !isWeeklyReflection(a.reviewSummary)})),
-        readInsightCodes:snapshot.readInsightCodes, completedNodeCodes:snapshot.completedNodeCodes,
-        currentNodeCode:snapshot.currentNodeCode, currentWeek:snapshot.currentWeek,
-        finalAvailable:snapshot.currentNodeCode==='FINAL_REPORT', completed:snapshot.completedNodeCodes.includes('FINAL_REPORT'),
+
+      const [applications, activities, cvs, tasks, persistedState] =
+        await Promise.all([
+          tx.application.findMany({
+            where: { userId },
+            select: reportApplicationSelect,
+          }),
+          tx.sideTaskSubmission.findMany({
+            where: { userId },
+            orderBy: { createdAt: 'asc' },
+          }),
+          tx.userCvHistory.findMany({
+            where: { userId },
+            orderBy: [{ uploadedAt: 'asc' }, { versionNumber: 'asc' }],
+            select: {
+              id: true,
+              versionNumber: true,
+              originalName: true,
+              uploadedAt: true,
+            },
+          }),
+          tx.task.findMany({
+            where: { userId, status: 'DONE' },
+            select: { id: true, title: true, completedAt: true },
+          }),
+          tx.userJourneyState.findUnique({ where: { userId } }),
+        ]);
+
+      if (!persistedState && !adminPreview) {
+        throw new NotFoundException('Journey state not found');
+      }
+      const state = persistedState ?? {
+        readInsightCodes: [],
+        completedNodeCodes: [],
+        currentNodeCode: 'TASK_0',
+        currentWeek: 0,
       };
+
+      return buildReportsPayload({
+        applications,
+        activities,
+        cvs,
+        tasks,
+        state,
+      });
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
 

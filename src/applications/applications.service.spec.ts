@@ -210,4 +210,16 @@ describe('ApplicationsService', () => {
     await expect(service.findAll('user-id',{cvVersion:999})).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('keeps sharing disabled before Task 0, then defaults it on while respecting opt-out',async()=>{
+    prisma.userJourneyState={findUnique:jest.fn().mockResolvedValue({currentWeek:0,isGroupUnlocked:false,completedNodeCodes:[]})};
+    expect((await service.create('user-id',{companyName:'Company',jobTitle:'Designer',sharedWithGroup:true})).sharedWithGroup).toBe(false);
+    prisma.userJourneyState.findUnique.mockResolvedValue({currentWeek:1,isGroupUnlocked:true,completedNodeCodes:['TASK_0']});
+    expect((await service.create('user-id',{companyName:'Company',jobTitle:'Designer'})).sharedWithGroup).toBe(true);
+    expect((await service.create('user-id',{companyName:'Company',jobTitle:'Designer',sharedWithGroup:false})).sharedWithGroup).toBe(false);
+  });
+  it('rejects turning sharing on through an update before the group unlocks',async()=>{
+    transaction.userJourneyState={findUnique:jest.fn().mockResolvedValue({currentWeek:0,isGroupUnlocked:false,completedNodeCodes:[]})};
+    await expect(service.update('user-id','application-id',{sharedWithGroup:true})).rejects.toBeInstanceOf(BadRequestException);
+  });
+
 });

@@ -331,6 +331,7 @@ describe('JourneyEngineService (Journey V4 State Machine)', () => {
         currentNodeCode: 'W1_REVIEW',
       };
 
+      currentState.weekStartedAt = new Date(Date.now()-8*86400000);
       prisma.sideTaskSubmission.findMany.mockResolvedValueOnce([{ reviewSummary: 'Reviewed the week' }]);
 
       const result = await service.submitSideTask('user-1', {
@@ -397,6 +398,19 @@ describe('JourneyEngineService (Journey V4 State Machine)', () => {
       await service.evaluateInterviewGuidanceUnlocks('user-1');
       expect(currentState.unlockedInsightCodes).not.toContain('INSIGHT_W1_INTERVIEW_BASIC');
     });
+  });
+
+  it.each([1,2,3])('waits a full seven days before advancing Week %i, even if its review is done',async week=>{
+    currentState={...currentState,currentWeek:week,currentNodeCode:`W${week}_REVIEW`,weekStartedAt:new Date(Date.now()-6.5*86400000)};
+    prisma.sideTaskSubmission.findMany.mockResolvedValue([{reviewSummary:'Reviewed applications and learned what to change'}]);
+    let state=await service.evaluateProgress('user-1');
+    expect(state.currentWeek).toBe(week);
+    expect(state.completedNodeCodes).toContain(`W${week}_REVIEW`);
+    currentState.weekStartedAt=new Date(Date.now()-7*86400000-1000);
+    state=await service.evaluateProgress('user-1');
+    expect(state.currentWeek).toBe(week+1);
+    expect(state.currentNodeCode).toBe(`W${week+1}_M1`);
+    expect(state.weekStartedAt.getTime()).toBeGreaterThan(Date.now()-2000);
   });
 
 });

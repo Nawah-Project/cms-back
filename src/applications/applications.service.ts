@@ -109,7 +109,7 @@ export class ApplicationsService {
     const journeyState = this.prisma?.userJourneyState?.findUnique
       ? await this.prisma.userJourneyState.findUnique({
           where: { userId },
-          select: { currentWeek: true },
+          select: { currentWeek: true, isGroupUnlocked: true, completedNodeCodes: true },
         })
       : null;
     const journeyWeek =
@@ -140,7 +140,7 @@ export class ApplicationsService {
           ? { prepChecklist: createDto.prepChecklist as Prisma.InputJsonValue }
           : {}),
         interviewNotes: createDto.interviewNotes?.trim() || null,
-        sharedWithGroup: createDto.sharedWithGroup ?? false,
+        sharedWithGroup: Boolean(journeyState?.isGroupUnlocked || journeyState?.completedNodeCodes?.includes("TASK_0") || (journeyState?.currentWeek ?? 0)>=1) && (createDto.sharedWithGroup ?? true),
         closedAt: stage === ApplicationStage.CLOSED ? new Date() : null,
       },
     });
@@ -360,6 +360,10 @@ export class ApplicationsService {
         updateDto.sharedWithGroup !== undefined &&
         updateDto.sharedWithGroup !== application.sharedWithGroup
       ) {
+        if(updateDto.sharedWithGroup) {
+          const state=await transaction.userJourneyState.findUnique({where:{userId},select:{isGroupUnlocked:true,currentWeek:true,completedNodeCodes:true}});
+          if(!state || !(state.isGroupUnlocked || state.currentWeek>=1 || state.completedNodeCodes.includes('TASK_0'))) throw new BadRequestException('Complete Task 0 to share opportunities with your group');
+        }
         data.sharedWithGroup = updateDto.sharedWithGroup;
       }
       if (Object.keys(data).length === 0) return application;

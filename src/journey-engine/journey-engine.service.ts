@@ -563,14 +563,14 @@ export class JourneyEngineService implements OnModuleInit {
     if (
       account?.role !== 'ADMIN' &&
       nextNode &&
-      nextNode.weekNumber === currentNode.weekNumber
+      (nextNode.weekNumber === currentNode.weekNumber || (currentNode.weekNumber >= 1 && nextNode.weekNumber > currentNode.weekNumber))
     ) {
       const weekNodes = (await this.getAllNodes())
         .filter((node) => node.weekNumber === nextNode.weekNumber)
         .sort((a, b) => a.orderIndex - b.orderIndex);
-      const elapsedDaysBeforeNextNode = weekNodes
-        .filter((node) => node.orderIndex < nextNode.orderIndex)
-        .reduce((days, node) => days + node.durationDays, 0);
+      const elapsedDaysBeforeNextNode = nextNode.weekNumber > currentNode.weekNumber
+        ? 7 * (nextNode.weekNumber - currentNode.weekNumber)
+        : weekNodes.filter((node) => node.orderIndex < nextNode.orderIndex).reduce((days, node) => days + node.durationDays, 0);
       const nextNodeAvailableAt = new Date(
         state.weekStartedAt.getTime() +
           elapsedDaysBeforeNextNode * 86_400_000,

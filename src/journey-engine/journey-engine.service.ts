@@ -525,7 +525,7 @@ export class JourneyEngineService implements OnModuleInit {
         ? `Guidance unlocked: ${guidance.titleEn} after completing ${currentNode.titleEn}.`
         : `New guidance unlocked after completing ${currentNode.titleEn}.`;
 
-      await this.createNotificationSafe({
+      if (currentNode.code !== 'TASK_0') await this.createNotificationSafe({
         userId,
         type: 'INSIGHT_UNLOCKED',
         titleAr,
@@ -553,17 +553,7 @@ export class JourneyEngineService implements OnModuleInit {
           'Congratulations on completing Task 0! You have been assigned to a cohort group and can now view Members Progress.',
         actionUrl: '/members-progress',
       });
-      await this.createNotificationSafe({
-        userId,
-        type: 'PROFESSIONAL_DEVELOPMENT_UNLOCKED',
-        titleAr: 'إرشاداتك المهنية الأولى متاحة!',
-        titleEn: 'Professional Development Unlocked!',
-        bodyAr:
-          'أكملت المهمة صفر! تعرّف على مجموعتك، ثم افتح إرشاد تحسين السيرة وارفع النسخة المحدّثة لفتح تحليل الأداء.',
-        bodyEn:
-          'Task 0 completed! Meet your group, then follow the CV guidance and upload your updated CV to unlock analytics.',
-        actionUrl: '/professional-development',
-      });
+
     }
 
     if (currentNode.code === 'W1_M1') {
@@ -625,7 +615,7 @@ export class JourneyEngineService implements OnModuleInit {
       },
     });
 
-    if (nextNode) {
+    if (nextNode && currentNode.code !== 'TASK_0') {
       await this.createNotificationSafe({
         userId,
         type: 'QUEST_UNLOCKED',

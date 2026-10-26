@@ -126,6 +126,7 @@ describe('JourneyEngineService (Journey V4 State Machine)', () => {
       expect(state.isGroupUnlocked).toBe(true);
       expect(state.completedNodeCodes).toContain('TASK_0');
       expect(state.unlockedInsightCodes).toContain('INSIGHT_TASK_0_CV_BASE');
+      expect(prisma.notification.create.mock.calls.map(([input])=>input.data.type)).toEqual(['GROUP_ACTIVITY']);
       expect(groupAssignment.assignUserToGroup).toHaveBeenCalledWith('user-1');
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         'journey.node_completed',

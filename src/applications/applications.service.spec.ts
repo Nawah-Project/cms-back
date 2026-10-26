@@ -151,6 +151,16 @@ describe('ApplicationsService', () => {
     expect(result.unfilteredTotal).toBe(5);
   });
 
+  it('filters a change cohort by inclusive start and exclusive end while retaining member ownership', async () => {
+    await service.findAll('user-id', { createdFrom: '2026-10-01T12:00:00Z', createdBefore: '2026-10-04T12:00:00Z', page: 2, limit: 100 });
+    expect(prisma.application.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: 'user-id', createdAt: { gte: new Date('2026-10-01T12:00:00Z'), lt: new Date('2026-10-04T12:00:00Z') } }, skip: 100, take: 100 }));
+  });
+
+  it('rejects a reversed change period', async () => {
+    await expect(service.findAll('user-id', { createdFrom: '2026-10-05T12:00:00Z', createdBefore: '2026-10-04T12:00:00Z' })).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.application.findMany).not.toHaveBeenCalled();
+  });
+
   it('allows editing an application already closed with NO_RESPONSE', async () => {
     application.stage = 'CLOSED';
     application.outcome = 'NO_RESPONSE';

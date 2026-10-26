@@ -1,14 +1,17 @@
 import { isWeeklyReflection } from './journey-rules';
+import { PROFESSIONAL_CHANGE_INTERVAL_MS } from './professional-change.util';
 import { JOURNEY_GUIDANCE_CATALOG } from '../feedback/journey-guidance.catalog';
 import { JOURNEY_V4_NODES } from './journey-v4.seed';
 
 /** Cohort metrics describe recorded evidence as of now, not response dates. */
 export interface ReportApplication {
+  id?: string; companyName?: string; jobTitle?: string;
   stage: string; outcome: string; hasAssignment: boolean; isTailored: boolean;
   journeyWeek: number; createdAt: Date;
   transitions: { fromStage: string; toStage: string; outcome: string | null; changedAt: Date }[];
 }
 export const reportApplicationSelect = {
+  id: true, companyName: true, jobTitle: true,
   stage: true, outcome: true, hasAssignment: true, isTailored: true,
   journeyWeek: true, createdAt: true,
   transitions: { select: { fromStage: true, toStage: true, outcome: true, changedAt: true } },
@@ -103,10 +106,12 @@ function buildWeeklyStageSummaries(input: {
   applications: ReportApplication[];
   activities: ReportActivityInput[];
   nodes: readonly ReportJourneyNodeInput[];
+  includeLockedWeeks?: boolean;
   state: ReportStateInput;
 }) {
   const completed = new Set(input.state.completedNodeCodes);
   const visible = (week: number) =>
+    input.includeLockedWeeks ||
     week <= input.state.currentWeek ||
     completed.has(`W${week}_REVIEW`) ||
     input.state.currentNodeCode === 'FINAL_REPORT';
@@ -169,6 +174,7 @@ export function buildReportsPayload(input: {
   tasks: ReportTaskInput[];
   state: ReportStateInput;
   journeyNodes?: ReportJourneyNodeInput[];
+  includeLockedWeeks?: boolean;
   asOf?: Date;
 }) {
   const asOf = input.asOf ?? new Date();
@@ -225,9 +231,9 @@ export function buildReportsPayload(input: {
   // CV uploads and explicit USER_CHANGE records. Outcomes are current as-of
   // this snapshot and are not attributed to the checkpoint.
   const checkpoints = [
-    ...input.cvs.map(cv => ({ kind: 'CV' as const, title: `CV v${cv.versionNumber}`, at: cv.uploadedAt })),
+    ...input.cvs.map(cv => ({ id: cv.id, kind: 'CV' as const, title: `CV v${cv.versionNumber}`, at: cv.uploadedAt })),
     ...input.activities.filter(activity => activity.type === 'USER_CHANGE').map((activity, index) => ({
-      kind: 'USER_CHANGE' as const, title: `Manual change ${index + 1}`, at: activity.createdAt,
+      id: activity.id, kind: 'USER_CHANGE' as const, title: `Manual change ${index + 1}`, at: activity.createdAt,
     })),
   ].sort((a, b) => a.at.getTime() - b.at.getTime() || a.kind.localeCompare(b.kind));
   const periodComparisons: {
@@ -237,20 +243,25 @@ export function buildReportsPayload(input: {
     startAt: Date;
     endAt: Date | null;
     metrics: ReturnType<typeof reportMetrics>;
+    applications: { id: string; companyName: string; jobTitle: string; createdAt: Date; stage: string; outcome: string; isTailored: boolean; positive: boolean }[];
   }[] = [];
+  const applicationRows = (apps: ReportApplication[]) => apps.filter(app => app.id).map(app => ({
+    id: app.id!, companyName: app.companyName ?? '', jobTitle: app.jobTitle ?? '',
+    createdAt: app.createdAt, stage: app.stage, outcome: app.outcome, isTailored: app.isTailored, positive: applicationEvidence(app).positive,
+  })).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || a.id.localeCompare(b.id));
   if (checkpoints.length) {
     const firstAt = checkpoints[0].at;
     const before = input.applications.filter(app => app.createdAt < firstAt);
     if (before.length) {
       const startAt = before.reduce((earliest, app) => app.createdAt < earliest ? app.createdAt : earliest, before[0].createdAt);
-      periodComparisons.push({ id: 'before-first-checkpoint', kind: 'BEFORE_FIRST_CHECKPOINT', title: 'Before first recorded checkpoint', startAt, endAt: firstAt, metrics: reportMetrics(before) });
+      periodComparisons.push({ id: 'before-first-checkpoint', kind: 'BEFORE_FIRST_CHECKPOINT', title: 'Before first recorded checkpoint', startAt, endAt: firstAt, metrics: reportMetrics(before), applications: applicationRows(before) });
     }
     checkpoints.forEach((checkpoint, index) => {
       const next = checkpoints[index + 1];
       const cohort = input.applications.filter(app => app.createdAt >= checkpoint.at && (!next || app.createdAt < next.at));
       periodComparisons.push({
-        id: `checkpoint-${index + 1}`, kind: checkpoint.kind, title: checkpoint.title,
-        startAt: checkpoint.at, endAt: next?.at ?? null, metrics: reportMetrics(cohort),
+        id: `${checkpoint.kind}-${checkpoint.id}`, kind: checkpoint.kind, title: checkpoint.title,
+        startAt: checkpoint.at, endAt: next?.at ?? null, metrics: reportMetrics(cohort), applications: applicationRows(cohort),
       });
     });
   }
@@ -259,6 +270,7 @@ export function buildReportsPayload(input: {
     applications: input.applications,
     activities: input.activities,
     nodes: input.journeyNodes ?? JOURNEY_V4_NODES,
+    includeLockedWeeks: input.includeLockedWeeks,
     state: input.state,
   });
   const readGuidance = JOURNEY_GUIDANCE_CATALOG
@@ -269,7 +281,28 @@ export function buildReportsPayload(input: {
       weekNumber: insight.weekNumber,
     }));
 
+  const completed = new Set(input.state.completedNodeCodes);
+  const week = input.state.currentWeek;
+  const analyticsAccess = {
+    cv: input.cvs.length > 0 || completed.has('TASK_0'),
+    pipeline: completed.has('W1_M1') || week >= 2,
+    tailoring: completed.has('W1_REVIEW') || week >= 2,
+    publishing: completed.has('W2_REVIEW') || week >= 3,
+    networking: completed.has('W3_REVIEW') || week >= 4,
+    freeChanges: week >= 3,
+  };
+  const cohortDays = new Map<string, { date: string; logged: number; positive: number }>();
+  for (const app of input.applications) {
+    const key = app.createdAt.toISOString().slice(0, 10);
+    const value = cohortDays.get(key) ?? { date: key, logged: 0, positive: 0 };
+    value.logged++; value.positive += Number(applicationEvidence(app).positive); cohortDays.set(key, value);
+  }
+  const latestChange = input.activities.filter(a => a.type === 'USER_CHANGE').sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+  const nextAvailableAt = latestChange ? new Date(latestChange.createdAt.getTime() + PROFESSIONAL_CHANGE_INTERVAL_MS) : null;
   return {
+    dailyCohorts: [...cohortDays.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    manualUpdate: { eligible: week >= 3, canSubmit: week >= 3 && (!nextAvailableAt || asOf >= nextAvailableAt), nextAvailableAt },
+    analyticsAccess,
     asOf,
     overall: {
       ...reportMetrics(input.applications),
@@ -323,6 +356,7 @@ export function buildDemoReports(scenario: DemoReportScenario = 'COMPLETED') {
     fields: Omit<ReportApplication, 'journeyWeek' | 'createdAt'>,
   ): ReportApplication => ({
     ...fields,
+    id, companyName: `DEMO company ${id}`, jobTitle: 'DEMO role',
     journeyWeek,
     createdAt: date(createdAt),
   });

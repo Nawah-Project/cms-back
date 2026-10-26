@@ -27,6 +27,7 @@ import {
   reportMetrics,
 } from './reporting.util';
 import { createHash } from 'node:crypto';
+import { persistProfessionalChange } from './professional-change.util';
 import { isWeeklyReflection, professionalTasksUnlocked } from './journey-rules';
 import { GroupAssignmentService } from '../members/group-assignment.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -831,8 +832,7 @@ export class JourneyEngineService implements OnModuleInit {
     }
     let submission: SideTaskSubmission;
     try {
-    submission = await this.prisma.sideTaskSubmission.create({
-      data: {
+    const submissionData: Prisma.SideTaskSubmissionUncheckedCreateInput = {
         userId,
         requestKey,
         nodeCode,
@@ -854,8 +854,10 @@ export class JourneyEngineService implements OnModuleInit {
         // Version metadata belongs exclusively to actual CV uploads.
         newCvUploaded: false,
         sharedInGroup: dto.sharedInGroup ?? true,
-      },
-    });
+    };
+    submission = dto.type === SideTaskType.USER_CHANGE
+      ? await persistProfessionalChange(this.prisma, submissionData)
+      : await this.prisma.sideTaskSubmission.create({ data: submissionData });
     } catch (error) {
       if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') throw error;
       const replay = await this.prisma.sideTaskSubmission.findFirst({ where: { userId, requestKey } });
@@ -1142,6 +1144,7 @@ export class JourneyEngineService implements OnModuleInit {
         activities,
         cvs,
         tasks,
+        includeLockedWeeks: adminPreview,
         journeyNodes: journeyNodes.length ? journeyNodes : [...JOURNEY_V4_NODES],
         state,
       });

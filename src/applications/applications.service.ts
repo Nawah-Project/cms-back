@@ -170,8 +170,15 @@ export class ApplicationsService {
       query.limit && query.limit > 0 ? Math.min(query.limit, 1000) : 20;
     const sortOrder = query.sortOrder?.toUpperCase() === 'ASC' ? 'asc' : 'desc';
     const search = query.search?.trim();
+    if (query.createdFrom && query.createdBefore && new Date(query.createdFrom) >= new Date(query.createdBefore)) {
+      throw new BadRequestException('The period end must be after its start');
+    }
     const where: Prisma.ApplicationWhereInput = {
       userId,
+      ...((query.createdFrom || query.createdBefore) ? { createdAt: {
+        ...(query.createdFrom ? { gte: new Date(query.createdFrom) } : {}),
+        ...(query.createdBefore ? { lt: new Date(query.createdBefore) } : {}),
+      } } : {}),
       ...(query.stage
         ? query.stage === 'ACTIVE'
           ? { stage: { not: ApplicationStage.CLOSED } }

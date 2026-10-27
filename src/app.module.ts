@@ -1,3 +1,4 @@
+import { UxLabModule } from './ux-lab/ux-lab.module';
 import { Module } from '@nestjs/common';
 import { ExperienceModule } from './experience/experience.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
@@ -21,6 +22,7 @@ import { JourneyEngineModule } from './journey-engine/journey-engine.module';
 @Module({
   imports: [
     ExperienceModule,
+    UxLabModule,
     EventEmitterModule.forRoot({ wildcard: true, delimiter: '.' }),
     PrismaModule,
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),

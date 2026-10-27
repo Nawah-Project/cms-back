@@ -147,8 +147,73 @@ model User {
   notifications       Notification[]
   emailDeliveryLogs   EmailDeliveryLog[]
   experienceProgress UserExperienceProgress[]
+  labAssignments UxLabAssignment[]
+  labEvents UxLabEvent[]
 
   @@map("users")
+}
+
+// Section design releases are independent of the legacy global A/B/C experiment.
+// Revision identifiers are immutable: changing a release never resets journey data.
+model UxLabRelease {
+  id String @id @default(uuid()) @db.Uuid
+  section String @db.VarChar(40)
+  version String @db.VarChar(10)
+  createdBy String @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  @@index([section, createdAt(sort: Desc)])
+  @@map("ux_lab_releases")
+}
+
+model UxLabExperiment {
+  id String @id @default(uuid()) @db.Uuid
+  title String @db.VarChar(120)
+  hypothesis String @db.VarChar(1000)
+  section String @db.VarChar(40)
+  treatment String @default("B") @db.VarChar(10)
+  status String @default("DRAFT") @db.VarChar(20)
+  audience String @default("ALL") @db.VarChar(10)
+  groupIds String[] @default([]) @map("group_ids") @db.Uuid
+  userIds String[] @default([]) @map("user_ids") @db.Uuid
+  allocation Int @default(50)
+  primaryMetric String @map("primary_metric") @db.VarChar(40)
+  minSample Int @default(30) @map("min_sample")
+  createdBy String @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  startedAt DateTime? @map("started_at")
+  endedAt DateTime? @map("ended_at")
+  assignments UxLabAssignment[]
+  @@index([section, status])
+  @@map("ux_lab_experiments")
+}
+
+model UxLabAssignment {
+  id String @id @default(uuid()) @db.Uuid
+  experimentId String @map("experiment_id") @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  version String @db.VarChar(10)
+  createdAt DateTime @default(now()) @map("created_at")
+  experiment UxLabExperiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([experimentId, userId])
+  @@map("ux_lab_assignments")
+}
+
+model UxLabEvent {
+  id String @id @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  sessionId String @map("session_id") @db.Uuid
+  groupId String? @map("group_id") @db.Uuid
+  section String @db.VarChar(40)
+  version String @db.VarChar(10)
+  context String @db.VarChar(100)
+  name String @db.VarChar(40)
+  duration Int @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([createdAt, section])
+  @@index([context, userId, sessionId, name])
+  @@map("ux_lab_events")
 }
 
 enum ExperienceProgressStatus {

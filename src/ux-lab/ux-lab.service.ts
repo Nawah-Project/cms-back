@@ -437,10 +437,14 @@ export class UxLabService {
   private async compare(e: UxLabExperiment, since: Date, groupId?: string) {
     if (e.audience === 'ENTRY') {
       const rows = await this.prisma.$queryRaw<
-        Array<{ version: string; assigned: number; completed: number }>
+        Array<{ version: string; assigned: number; completed: number; errors: number }>
       >`
         SELECT a.version, count(*)::int assigned,
-          count(*) FILTER (WHERE 'TASK_0'=ANY(coalesce(j."completedNodeCodes", ARRAY[]::text[])))::int completed
+          count(*) FILTER (WHERE 'TASK_0'=ANY(coalesce(j."completedNodeCodes", ARRAY[]::text[])))::int completed,
+          count(*) FILTER (WHERE EXISTS (
+            SELECT 1 FROM ux_lab_events err WHERE err.user_id=a.user_id
+            AND err.created_at>=a.created_at AND err.name IN ('request_failed','validation_failed')
+          ))::int errors
         FROM ux_lab_assignments a JOIN users u ON u.id=a.user_id
         LEFT JOIN user_journey_states j ON j."userId"=u.id
         WHERE a.experiment_id=${e.id}::uuid AND a.created_at>=${since} AND u.role='USER' AND u.id<>${QA_ID}::uuid
@@ -452,7 +456,7 @@ export class UxLabService {
           version,
           exposed: row?.assigned ?? 0,
           converted: row?.completed ?? 0,
-          errors: 0,
+          errors: row?.errors ?? 0,
           medianSeconds: null,
           rate: rate(row?.completed ?? 0, row?.assigned ?? 0),
         };

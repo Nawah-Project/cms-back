@@ -13,7 +13,12 @@ import {
   LabReleaseDto,
   LabReportQuery,
 } from './ux-lab.dto';
-import { registrySection, SECTION_REGISTRY, stableArm } from './registry';
+import {
+  registrySection,
+  SECTION_REGISTRY,
+  stableArm,
+  PREVIEW_ONLY_SECTIONS,
+} from './registry';
 
 // A dedicated production QA account must not affect research evidence. Admin previews
 // are excluded by role. No real user is excluded based on their name or activity.
@@ -41,7 +46,9 @@ export class UxLabService {
     });
     return Object.fromEntries(
       SECTION_REGISTRY.map((s) => {
-        const r = rows.find((x) => x.section === s.id);
+        const r = PREVIEW_ONLY_SECTIONS.has(s.id)
+          ? undefined
+          : rows.find((x) => x.section === s.id);
         return [
           s.id,
           {
@@ -66,6 +73,7 @@ export class UxLabService {
       include: { assignments: { where: { userId } } },
     });
     for (const e of experiments) {
+      if (PREVIEW_ONLY_SECTIONS.has(e.section)) continue;
       const targeted =
         e.audience === 'ALL' ||
         (e.audience === 'USERS' && e.userIds.includes(userId)) ||
@@ -92,6 +100,8 @@ export class UxLabService {
     return { sections, excluded: false };
   }
   async create(actorId: string, dto: LabExperimentDto) {
+    if (PREVIEW_ONLY_SECTIONS.has(dto.section))
+      throw new BadRequestException('Home B is administrator preview only');
     if (dto.title.trim().length < 3 || dto.hypothesis.trim().length < 10)
       throw new BadRequestException(
         'A meaningful title and hypothesis are required',
@@ -149,6 +159,8 @@ export class UxLabService {
       if (!transitions[e.status].includes(status))
         throw new ConflictException('Experiment status changed; refresh first');
       if (status === 'RUNNING') {
+        if (PREVIEW_ONLY_SECTIONS.has(e.section))
+          throw new BadRequestException('Home B is administrator preview only');
         if (
           await db.uxLabExperiment.count({
             where: {
@@ -179,6 +191,8 @@ export class UxLabService {
     });
   }
   async publish(actorId: string, section: string, dto: LabReleaseDto) {
+    if (PREVIEW_ONLY_SECTIONS.has(section))
+      throw new BadRequestException('Home B is administrator preview only');
     const s = registrySection(section);
     if (!s || !(s.versions as readonly string[]).includes(dto.version))
       throw new BadRequestException('Design is not implemented');
@@ -222,6 +236,8 @@ export class UxLabService {
     // Validate the complete batch before writing. There is deliberately no arbitrary
     // metadata field: CV contents, form values and identifying text cannot enter it.
     for (const e of batch.events) {
+      if (PREVIEW_ONLY_SECTIONS.has(e.section))
+        throw new BadRequestException('Home B is administrator preview only');
       const s = registrySection(e.section)!;
       if (
         !(s.metrics as readonly string[]).includes(e.name) &&

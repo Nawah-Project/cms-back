@@ -185,4 +185,59 @@ describe('Section experiment safety', () => {
     expect(r.accepted).toBe(0);
     expect(db.uxLabEvent.createMany).not.toHaveBeenCalled();
   });
+  test('preview-only home cannot publish, create experiments, enroll users or restore a stale release', async () => {
+    const db = database(),
+      service = new UxLabService(db);
+    db.uxLabRelease.findMany.mockResolvedValue([
+      { section: 'home', version: 'B', id: 'stale', createdAt: new Date() },
+    ]);
+    db.uxLabExperiment.findMany.mockResolvedValue([
+      {
+        section: 'home',
+        id: 'stale-experiment',
+        assignments: [],
+        audience: 'ALL',
+      },
+    ]);
+    const result = await service.assignment(uid);
+    expect(result.sections.home.version).toBe('A');
+    expect(db.uxLabAssignment.upsert).not.toHaveBeenCalled();
+    await expect(
+      service.create(uid, { section: 'home' } as any),
+    ).rejects.toThrow(BadRequestException);
+    await expect(
+      service.publish(uid, 'home', {
+        version: 'B',
+        expectedContext: 'baseline',
+      }),
+    ).rejects.toThrow(BadRequestException);
+    expect(db.uxLabExperiment.create).not.toHaveBeenCalled();
+    expect(db.uxLabRelease.create).not.toHaveBeenCalled();
+  });
+
+  test('preview-only home rejects both stale activation and ordinary-user telemetry', async () => {
+    const db = database(),
+      service = new UxLabService(db);
+    db.uxLabExperiment.findUnique.mockResolvedValue({
+      section: 'home',
+      status: 'DRAFT',
+    });
+    db.uxLabExperiment.findUniqueOrThrow.mockResolvedValue({
+      section: 'home',
+      status: 'DRAFT',
+    });
+    await expect(service.transition('stale', 'RUNNING')).rejects.toThrow(
+      BadRequestException,
+    );
+    expect(db.uxLabExperiment.update).not.toHaveBeenCalled();
+    await expect(
+      service.record(uid, {
+        accountId: uid,
+        events: [
+          { section: 'home', version: 'B', name: 'view', context: 'preview' },
+        ],
+      } as any),
+    ).rejects.toThrow(BadRequestException);
+    expect(db.uxLabEvent.createMany).not.toHaveBeenCalled();
+  });
 });

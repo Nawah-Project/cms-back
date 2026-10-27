@@ -1,3 +1,7 @@
+import {
+  HomePreviewController,
+  HomePreviewService,
+} from './home-preview.controller';
 import { JourneyObservatoryService } from './journey-observatory.service';
 import {
   JourneyMapQuery,
@@ -99,7 +103,12 @@ class LabAdminController {
 }
 @Module({
   imports: [PrismaModule, AuthModule],
-  controllers: [LabPublicController, LabAdminController],
-  providers: [UxLabService, JourneyObservatoryService, AdminGuard],
+  controllers: [LabPublicController, LabAdminController, HomePreviewController],
+  providers: [
+    UxLabService,
+    JourneyObservatoryService,
+    HomePreviewService,
+    AdminGuard,
+  ],
 })
 export class UxLabModule {}

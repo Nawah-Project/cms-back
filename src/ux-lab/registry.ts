@@ -1,6 +1,20 @@
 // Register real implementations here before exposing them in the experiment editor.
 // A means the full approved experience at the 27 Oct 2026 cutover, never legacy A.
+export const PREVIEW_ONLY_SECTIONS = new Set(['home']);
 export const SECTION_REGISTRY = [
+  {
+    id: 'home',
+    titleAr: 'الرئيسية',
+    titleEn: 'Home',
+    versions: ['A', 'B'],
+    previewOnly: true,
+    metrics: [
+      'home_continue_clicked',
+      'home_station_opened',
+      'home_scope_changed',
+      'home_peer_opened',
+    ],
+  },
   {
     id: 'applications',
     titleAr: 'طلبات التقديم',

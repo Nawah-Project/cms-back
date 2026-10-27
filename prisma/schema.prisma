@@ -647,3 +647,23 @@ model NotificationConfig {
 
   @@map("notification_configs")
 }
+
+model UxJourneyObservation {
+  id String @id @default(uuid()) @db.Uuid
+  nodeCode String @map("node_code") @db.VarChar(50)
+  groupId String? @map("group_id") @db.Uuid
+  subjectUserId String? @map("subject_user_id") @db.Uuid
+  title String @db.VarChar(140)
+  hypothesis String @db.VarChar(1500)
+  nextAction String @map("next_action") @db.VarChar(700)
+  category String @db.VarChar(20)
+  status String @default("OPEN") @db.VarChar(20)
+  ownerId String? @map("owner_id") @db.Uuid
+  authorId String @map("author_id") @db.Uuid
+  evidence Json
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@index([nodeCode, createdAt(sort: Desc)])
+  @@index([groupId, status])
+  @@map("ux_journey_observations")
+}

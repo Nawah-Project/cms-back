@@ -1,3 +1,10 @@
+import { JourneyObservatoryService } from './journey-observatory.service';
+import {
+  JourneyMapQuery,
+  JourneyObservationQuery,
+  JourneyObservationDto,
+  JourneyObservationStatusDto,
+} from './journey-observatory.dto';
 import {
   Body,
   Controller,
@@ -40,7 +47,30 @@ class LabPublicController {
 @Controller('admin/ux-lab/v2')
 @UseGuards(JwtAuthGuard, AdminGuard)
 class LabAdminController {
-  constructor(private readonly lab: UxLabService) {}
+  constructor(
+    private readonly lab: UxLabService,
+    private readonly observatory: JourneyObservatoryService,
+  ) {}
+  @Get('journey-map') journeyMap(@Query() query: JourneyMapQuery) {
+    return this.observatory.map(query);
+  }
+  @Get('journey-observations') observations(
+    @Query() query: JourneyObservationQuery,
+  ) {
+    return this.observatory.observations(query);
+  }
+  @Post('journey-observations') createObservation(
+    @CurrentUser('id') id: string,
+    @Body() body: JourneyObservationDto,
+  ) {
+    return this.observatory.createObservation(id, body);
+  }
+  @Patch('journey-observations/:id') observationStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: JourneyObservationStatusDto,
+  ) {
+    return this.observatory.updateObservation(id, body);
+  }
   @Get('config') config() {
     return this.lab.config();
   }
@@ -70,6 +100,6 @@ class LabAdminController {
 @Module({
   imports: [PrismaModule, AuthModule],
   controllers: [LabPublicController, LabAdminController],
-  providers: [UxLabService, AdminGuard],
+  providers: [UxLabService, JourneyObservatoryService, AdminGuard],
 })
 export class UxLabModule {}

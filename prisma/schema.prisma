@@ -667,3 +667,13 @@ model UxJourneyObservation {
   @@index([groupId, status])
   @@map("ux_journey_observations")
 }
+
+// Durable private-file cleanup; contains no account identity or CV contents.
+model CvDeletionJob {
+  id String @id @default(uuid()) @db.Uuid
+  storageKey String @unique @map("storage_key") @db.VarChar(64)
+  attempts Int @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  lastAttemptAt DateTime? @map("last_attempt_at")
+  @@map("cv_deletion_jobs")
+}

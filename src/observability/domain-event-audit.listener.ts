@@ -1,8 +1,8 @@
-import { Injectable, Optional } from '@nestjs/common';
-import { OnEvent } from '@nestjs/event-emitter';
-import { Prisma } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
-import { domainEventsTotal } from './metrics.registry';
+import { Injectable, Optional } from "@nestjs/common";
+import { OnEvent } from "@nestjs/event-emitter";
+import { Prisma } from "@prisma/client";
+import { PrismaService } from "../prisma/prisma.service";
+import { domainEventsTotal } from "./metrics.registry";
 
 @Injectable()
 export class DomainEventAuditListener {
@@ -12,37 +12,37 @@ export class DomainEventAuditListener {
     payload: Record<string, unknown> | undefined,
     explicitEventName?: string,
   ): string {
-    if (explicitEventName && typeof explicitEventName === 'string') {
+    if (explicitEventName && typeof explicitEventName === "string") {
       return explicitEventName;
     }
-    if (typeof payload?.eventName === 'string' && payload.eventName.trim()) {
+    if (typeof payload?.eventName === "string" && payload.eventName.trim()) {
       return payload.eventName.trim();
     }
-    if (payload?.completedNodeCode) return 'journey.node_completed';
-    if (payload?.insightCode === 'INSIGHT_INTERVIEW_ADVANCED') {
-      return 'journey.adv_prep_unlocked';
+    if (payload?.completedNodeCode) return "journey.node_completed";
+    if (payload?.insightCode === "INSIGHT_INTERVIEW_ADVANCED") {
+      return "journey.adv_prep_unlocked";
     }
-    if (payload?.submissionId) return 'sidetask.submitted';
+    if (payload?.submissionId) return "sidetask.submitted";
     if (payload?.fromStage && payload?.toStage) {
-      return 'application.stage_changed';
+      return "application.stage_changed";
     }
     if (payload?.applicationId && payload?.journeyWeek !== undefined) {
-      return 'application.created';
+      return "application.created";
     }
-    if (payload?.applicationId) return 'application.updated';
+    if (payload?.applicationId) return "application.updated";
     if (payload?.uxEventName) return `ux.${String(payload.uxEventName)}`;
-    return 'domain.event';
+    return "domain.event";
   }
 
   private resolveEntityType(
     eventName: string,
     payload: Record<string, unknown> | undefined,
   ): string {
-    if (typeof payload?.entityType === 'string' && payload.entityType.trim()) {
+    if (typeof payload?.entityType === "string" && payload.entityType.trim()) {
       return payload.entityType.trim();
     }
-    const prefix = eventName.split('.')[0];
-    return prefix || 'unknown';
+    const prefix = eventName.split(".")[0];
+    return prefix || "unknown";
   }
 
   private resolveEntityId(
@@ -54,10 +54,10 @@ export class DomainEventAuditListener {
       payload?.submissionId ??
       payload?.completedNodeCode ??
       null;
-    return typeof candidate === 'string' ? candidate : null;
+    return typeof candidate === "string" ? candidate : null;
   }
 
-  @OnEvent('**')
+  @OnEvent("**")
   async handleDomainEvent(
     payload?: Record<string, unknown>,
     explicitEventName?: string,
@@ -68,33 +68,48 @@ export class DomainEventAuditListener {
     if (!this.prisma?.domainEventLog?.create) return;
 
     const actorId =
-      typeof payload?.actorId === 'string'
+      typeof payload?.actorId === "string"
         ? payload.actorId
-        : typeof payload?.userId === 'string'
+        : typeof payload?.userId === "string"
           ? payload.userId
           : null;
     const targetUserId =
-      typeof payload?.targetUserId === 'string' ? payload.targetUserId : null;
+      typeof payload?.targetUserId === "string" ? payload.targetUserId : null;
     const groupId =
-      typeof payload?.groupId === 'string' ? payload.groupId : null;
+      typeof payload?.groupId === "string" ? payload.groupId : null;
     const entityType = this.resolveEntityType(eventName, payload);
     const entityId = this.resolveEntityId(payload);
 
     try {
-      await this.prisma.domainEventLog.create({
-        data: {
-          eventName,
-          actorId,
-          targetUserId,
-          groupId,
-          entityType,
-          entityId,
-          payload: (payload ?? {}) as Prisma.InputJsonValue,
-        },
+      const data = {
+        eventName,
+        actorId,
+        targetUserId,
+        groupId,
+        entityType,
+        entityId,
+        payload: (payload ?? {}) as Prisma.InputJsonValue,
+      };
+      const identities = [
+        ...new Set([actorId, targetUserId].filter((v): v is string => !!v)),
+      ].sort();
+      if (!identities.length) {
+        await this.prisma.domainEventLog.create({ data });
+        return;
+      }
+      // Serialize late event writes with account deletion so audit data cannot reappear.
+      await this.prisma.$transaction(async (tx) => {
+        for (const id of identities)
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${id}))`;
+        if (
+          (await tx.user.count({ where: { id: { in: identities } } })) !==
+          identities.length
+        )
+          return;
+        await tx.domainEventLog.create({ data });
       });
     } catch {
       // Prevent audit log write failure from interrupting request flow
     }
   }
 }
-

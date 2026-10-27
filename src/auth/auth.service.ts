@@ -668,7 +668,9 @@ export class AuthService {
       });
       if (!payload.sub || payload.tokenType !== 'access')
         throw new Error('Wrong token type');
-      return { id: payload.sub, email: payload.email };
+      const account = await this.prisma.user.findUnique({ where: { id: payload.sub }, select: { id: true, email: true } });
+      if (!account) throw new Error('Account no longer exists');
+      return account;
     } catch {
       throw new UnauthorizedException('Invalid or expired access token');
     }

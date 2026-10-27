@@ -1,3 +1,7 @@
+import { HomeMemberController } from './home-member.controller';
+import { HomeMemberService } from './home-member.service';
+import { JourneyEngineModule } from '../journey-engine/journey-engine.module';
+import { ProfileModule } from '../profile/profile.module';
 import {
   HomePreviewController,
   HomePreviewService,
@@ -102,10 +106,16 @@ class LabAdminController {
   }
 }
 @Module({
-  imports: [PrismaModule, AuthModule],
-  controllers: [LabPublicController, LabAdminController, HomePreviewController],
+  imports: [PrismaModule, AuthModule, JourneyEngineModule, ProfileModule],
+  controllers: [
+    LabPublicController,
+    LabAdminController,
+    HomePreviewController,
+    HomeMemberController,
+  ],
   providers: [
     UxLabService,
+    HomeMemberService,
     JourneyObservatoryService,
     HomePreviewService,
     AdminGuard,

@@ -17,7 +17,7 @@ export class LabExperimentDto {
   @IsString() @Length(3, 120) title: string;
   @IsString() @Length(10, 1000) hypothesis: string;
   @IsIn(SECTIONS) section: string;
-  @IsIn(['ALL', 'GROUPS', 'USERS']) audience: string;
+  @IsIn(['ALL', 'GROUPS', 'USERS', 'ENTRY']) audience: string;
   @IsArray() @ArrayMaxSize(100) @IsUUID('4', { each: true }) groupIds: string[];
   @IsArray() @ArrayMaxSize(200) @IsUUID('4', { each: true }) userIds: string[];
   @IsInt() @Min(10) @Max(90) allocation: number;

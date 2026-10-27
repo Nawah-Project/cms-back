@@ -22,6 +22,7 @@ function database() {
     },
     uxLabExperiment: {
       findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn().mockResolvedValue(null),
       findUnique: jest.fn(),
       findUniqueOrThrow: jest.fn(),
       count: jest.fn().mockResolvedValue(0),
@@ -34,6 +35,7 @@ function database() {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     $executeRaw: jest.fn(),
+    $queryRaw: jest.fn(),
   };
   db.$transaction = (cb: any) => cb(db);
   return db;
@@ -185,59 +187,37 @@ describe('Section experiment safety', () => {
     expect(r.accepted).toBe(0);
     expect(db.uxLabEvent.createMany).not.toHaveBeenCalled();
   });
-  test('preview-only home cannot publish, create experiments, enroll users or restore a stale release', async () => {
+  test('organized entry rejects uneven allocation and arbitrary outcomes', async () => {
     const db = database(),
       service = new UxLabService(db);
-    db.uxLabRelease.findMany.mockResolvedValue([
-      { section: 'home', version: 'B', id: 'stale', createdAt: new Date() },
-    ]);
-    db.uxLabExperiment.findMany.mockResolvedValue([
-      {
+    await expect(
+      service.create(uid, {
         section: 'home',
-        id: 'stale-experiment',
-        assignments: [],
-        audience: 'ALL',
-      },
-    ]);
-    const result = await service.assignment(uid);
-    expect(result.sections.home.version).toBe('A');
-    expect(db.uxLabAssignment.upsert).not.toHaveBeenCalled();
-    await expect(
-      service.create(uid, { section: 'home' } as any),
-    ).rejects.toThrow(BadRequestException);
-    await expect(
-      service.publish(uid, 'home', {
-        version: 'B',
-        expectedContext: 'baseline',
-      }),
-    ).rejects.toThrow(BadRequestException);
-    expect(db.uxLabExperiment.create).not.toHaveBeenCalled();
-    expect(db.uxLabRelease.create).not.toHaveBeenCalled();
-  });
-
-  test('preview-only home rejects both stale activation and ordinary-user telemetry', async () => {
-    const db = database(),
-      service = new UxLabService(db);
-    db.uxLabExperiment.findUnique.mockResolvedValue({
-      section: 'home',
-      status: 'DRAFT',
-    });
-    db.uxLabExperiment.findUniqueOrThrow.mockResolvedValue({
-      section: 'home',
-      status: 'DRAFT',
-    });
-    await expect(service.transition('stale', 'RUNNING')).rejects.toThrow(
-      BadRequestException,
-    );
-    expect(db.uxLabExperiment.update).not.toHaveBeenCalled();
-    await expect(
-      service.record(uid, {
-        accountId: uid,
-        events: [
-          { section: 'home', version: 'B', name: 'view', context: 'preview' },
-        ],
+        audience: 'ENTRY',
+        allocation: 60,
+        primaryMetric: 'home_task_zero_completed',
       } as any),
     ).rejects.toThrow(BadRequestException);
+    await expect(
+      service.create(uid, {
+        section: 'home',
+        audience: 'ENTRY',
+        allocation: 50,
+        primaryMetric: 'home_continue_clicked',
+      } as any),
+    ).rejects.toThrow(BadRequestException);
+  });
+  test('home preview context and forged durable milestones cannot produce research events', async () => {
+    const db = database(),
+      service = new UxLabService(db);
+    for (const name of ['view', 'home_task_zero_completed']) {
+      await expect(
+        service.record(uid, {
+          accountId: uid,
+          events: [{ section: 'home', version: 'B', name, context: 'preview' }],
+        } as any),
+      ).rejects.toThrow(BadRequestException);
+    }
     expect(db.uxLabEvent.createMany).not.toHaveBeenCalled();
   });
 });

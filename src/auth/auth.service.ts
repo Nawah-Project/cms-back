@@ -180,12 +180,6 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
-  private shouldAssignGroupOnRegister(): boolean {
-    return (
-      process.env.ASSIGN_GROUP_ON_REGISTER?.trim().toLowerCase() === 'true'
-    );
-  }
-
   private async ensureInitialJourneyState(
     transaction: Prisma.TransactionClient,
     userId: string,
@@ -221,7 +215,8 @@ export class AuthService {
     await this.emailVerifier.validateEmailAddress(email);
 
     const passwordHash = await bcrypt.hash(dto.password, 12);
-    const assignOnRegister = this.shouldAssignGroupOnRegister();
+    // Specialization is chosen during profile completion; group placement waits for Task zero.
+        const assignOnRegister = false;
     const shouldRequireOtp = this.shouldRequireEmailOtp();
     const otpCode = this.generateOtpCode();
     const now = new Date();
@@ -251,9 +246,6 @@ export class AuthService {
               emailVerified: true,
             },
           });
-          if (assignOnRegister) {
-            await this.groupAssignment.assignUser(transaction, created.id);
-          }
           await this.ensureInitialJourneyState(
             transaction,
             created.id,
@@ -556,10 +548,8 @@ export class AuthService {
             providerEmail,
           },
         });
-        const assignOnRegister = this.shouldAssignGroupOnRegister();
-        if (assignOnRegister) {
-          await this.groupAssignment.assignUser(transaction, createdUser.id);
-        }
+        // Specialization is chosen during profile completion; group placement waits for Task zero.
+        const assignOnRegister = false;
         await this.ensureInitialJourneyState(
           transaction,
           createdUser.id,

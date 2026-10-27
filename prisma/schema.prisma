@@ -175,6 +175,7 @@ model UxLabExperiment {
   audience String @default("ALL") @db.VarChar(10)
   groupIds String[] @default([]) @map("group_ids") @db.Uuid
   userIds String[] @default([]) @map("user_ids") @db.Uuid
+  entrySequence Int @default(0) @map("entry_sequence")
   allocation Int @default(50)
   primaryMetric String @map("primary_metric") @db.VarChar(40)
   minSample Int @default(30) @map("min_sample")

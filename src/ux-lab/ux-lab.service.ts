@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, UxLabExperiment } from '@prisma/client';
+import { enrollOrganizedEntry } from '../members/organized-entry';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   LabEventBatchDto,
@@ -65,6 +66,7 @@ export class UxLabService {
       where: { id: userId },
       select: { role: true, membership: { select: { groupId: true } } },
     });
+    await this.prisma.$transaction((db) => enrollOrganizedEntry(db, userId));
     const sections = await this.releases();
     if (user.role !== 'USER' || userId === QA_ID)
       return { sections, excluded: true };
@@ -81,6 +83,7 @@ export class UxLabService {
           !!user.membership &&
           e.groupIds.includes(user.membership.groupId));
       if (!targeted && !e.assignments.length) continue;
+      if (e.audience === 'ENTRY' && !e.assignments.length) continue;
       // Upsert freezes the arm on the account even when the audience changes later.
       const a = await this.prisma.uxLabAssignment.upsert({
         where: { experimentId_userId: { experimentId: e.id, userId } },
@@ -102,6 +105,15 @@ export class UxLabService {
   async create(actorId: string, dto: LabExperimentDto) {
     if (PREVIEW_ONLY_SECTIONS.has(dto.section))
       throw new BadRequestException('Home B is administrator preview only');
+    if (
+      dto.audience === 'ENTRY' &&
+      (dto.section !== 'home' ||
+        dto.allocation !== 50 ||
+        dto.primaryMetric !== 'home_task_zero_completed')
+    )
+      throw new BadRequestException(
+        'Organized entry requires Home and a 50/50 allocation',
+      );
     if (dto.title.trim().length < 3 || dto.hypothesis.trim().length < 10)
       throw new BadRequestException(
         'A meaningful title and hypothesis are required',
@@ -118,7 +130,8 @@ export class UxLabService {
     const groupIds = [...new Set(dto.groupIds)],
       userIds = [...new Set(dto.userIds)];
     if (
-      (dto.audience === 'ALL' && (groupIds.length || userIds.length)) ||
+      (['ALL', 'ENTRY'].includes(dto.audience) &&
+        (groupIds.length || userIds.length)) ||
       (dto.audience === 'GROUPS' && (!groupIds.length || userIds.length)) ||
       (dto.audience === 'USERS' && (!userIds.length || groupIds.length))
     )
@@ -238,6 +251,10 @@ export class UxLabService {
     for (const e of batch.events) {
       if (PREVIEW_ONLY_SECTIONS.has(e.section))
         throw new BadRequestException('Home B is administrator preview only');
+      if (e.name === 'home_task_zero_completed')
+        throw new BadRequestException(
+          'Task zero is measured from durable journey state',
+        );
       const s = registrySection(e.section)!;
       if (
         !(s.metrics as readonly string[]).includes(e.name) &&
@@ -418,6 +435,37 @@ export class UxLabService {
     };
   }
   private async compare(e: UxLabExperiment, since: Date, groupId?: string) {
+    if (e.audience === 'ENTRY') {
+      const rows = await this.prisma.$queryRaw<
+        Array<{ version: string; assigned: number; completed: number }>
+      >`
+        SELECT a.version, count(*)::int assigned,
+          count(*) FILTER (WHERE 'TASK_0'=ANY(coalesce(j."completedNodeCodes", ARRAY[]::text[])))::int completed
+        FROM ux_lab_assignments a JOIN users u ON u.id=a.user_id
+        LEFT JOIN user_journey_states j ON j."userId"=u.id
+        WHERE a.experiment_id=${e.id}::uuid AND a.created_at>=${since} AND u.role='USER' AND u.id<>${QA_ID}::uuid
+        ${groupId ? Prisma.sql`AND EXISTS (SELECT 1 FROM memberships m WHERE m."userId"=u.id AND m."groupId"=${groupId}::uuid)` : Prisma.empty}
+        GROUP BY a.version`;
+      const arms = ['A', 'B'].map((version) => {
+        const row = rows.find((r) => r.version === version);
+        return {
+          version,
+          exposed: row?.assigned ?? 0,
+          converted: row?.completed ?? 0,
+          errors: 0,
+          medianSeconds: null,
+          rate: rate(row?.completed ?? 0, row?.assigned ?? 0),
+        };
+      });
+      return {
+        arms,
+        sufficient: arms.every((a) => a.exposed >= e.minSample),
+        deltaPoints: arms.every((a) => a.rate !== null)
+          ? Math.round((arms[1].rate! - arms[0].rate!) * 10) / 10
+          : null,
+        interpretation: 'DURABLE_ENTRY_COHORT',
+      };
+    }
     const rows = await this.prisma.$queryRaw<
       Array<{
         version: string;

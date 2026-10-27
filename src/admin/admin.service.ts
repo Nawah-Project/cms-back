@@ -953,6 +953,7 @@ export class AdminService {
             select: { id: true },
           });
           if (!target) throw new NotFoundException('Group not found');
+          await this.groupAssignment.assertCompatible(transaction, userId, targetGroupId);
           const membership = await transaction.membership.findUnique({
             where: { userId },
             select: { id: true, groupId: true },

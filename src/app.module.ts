@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ExperienceModule } from './experience/experience.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -19,6 +20,7 @@ import { JourneyEngineModule } from './journey-engine/journey-engine.module';
 
 @Module({
   imports: [
+    ExperienceModule,
     EventEmitterModule.forRoot({ wildcard: true, delimiter: '.' }),
     PrismaModule,
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),

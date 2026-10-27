@@ -146,8 +146,31 @@ model User {
   sideTaskSubmissions SideTaskSubmission[]
   notifications       Notification[]
   emailDeliveryLogs   EmailDeliveryLog[]
+  experienceProgress UserExperienceProgress[]
 
   @@map("users")
+}
+
+enum ExperienceProgressStatus {
+  IN_PROGRESS
+  COMPLETED
+  SKIPPED
+}
+
+model UserExperienceProgress {
+  id          String                   @id @default(uuid()) @db.Uuid
+  userId      String                   @map("user_id") @db.Uuid
+  flowKey     String                   @map("flow_key") @db.VarChar(100)
+  status      ExperienceProgressStatus @default(IN_PROGRESS)
+  currentStep Int                      @default(0) @map("current_step")
+  startedAt   DateTime                 @default(now()) @map("started_at")
+  finishedAt  DateTime?                @map("finished_at")
+  updatedAt   DateTime                 @updatedAt @map("updated_at")
+  user        User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, flowKey])
+  @@index([flowKey, status])
+  @@map("user_experience_progress")
 }
 
 model UserCv {

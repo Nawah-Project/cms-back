@@ -265,7 +265,7 @@ export class JourneyEngineService implements OnModuleInit {
       return existing;
     }
 
-    const [membership, existingAppsCount] = await Promise.all([
+    const [membership, existingAppsCount, latestCv] = await Promise.all([
       this.prisma?.membership?.findUnique
         ? this.prisma.membership.findUnique({
             where: { userId },
@@ -275,6 +275,9 @@ export class JourneyEngineService implements OnModuleInit {
       this.prisma?.application?.count
         ? this.prisma.application.count({ where: { userId } })
         : Promise.resolve(0),
+      this.prisma?.userCvHistory?.findFirst
+        ? this.prisma.userCvHistory.findFirst({ where: { userId }, orderBy: { versionNumber: 'desc' }, select: { versionNumber: true } })
+        : Promise.resolve(null),
     ]);
 
     const isGroupUnlocked = Boolean(membership);
@@ -292,7 +295,7 @@ export class JourneyEngineService implements OnModuleInit {
         isGroupUnlocked,
         canUseTableView,
         hasUnlockedAdvPrep: false,
-        cvVersionNumber: 1,
+        cvVersionNumber: Math.max(1, latestCv?.versionNumber ?? 1),
       },
     });
   }
@@ -319,7 +322,18 @@ export class JourneyEngineService implements OnModuleInit {
     outreachCount: number;
     weeklyReviewCount: number;
   }> {
-    const dateFilter = { createdAt: { gte: state.currentNodeStartedAt } };
+    let baseline = state.currentNodeStartedAt;
+    if (node.code === 'TASK_0' && this.prisma?.userExperienceProgress?.findUnique) {
+      const guide = await this.prisma.userExperienceProgress.findUnique({
+        where: { userId_flowKey: { userId, flowKey: 'first-application-v1' } },
+      });
+      // A GET must not complete Task 0 from pre-program legacy records while
+      // account guide history is still being loaded/imported. Reading and
+      // evaluating share this guard, including the first-write race window.
+      if (!guide) return { appsCount: 0, tailoredCount: 0, postsCount: 0, outreachCount: 0, weeklyReviewCount: 0 };
+      if (guide.status === 'IN_PROGRESS' && guide.startedAt > baseline) baseline = guide.startedAt;
+    }
+    const dateFilter = { createdAt: { gte: baseline } };
 
     const [
       appsCount,

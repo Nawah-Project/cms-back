@@ -34,7 +34,13 @@ export class HomeMemberService {
     const groupUnlocked = journey.state.completedNodeCodes.includes('TASK_0');
     const outsideUnlocked =
       journey.state.completedNodeCodes.includes('W2_REVIEW');
-    return { viewer, journey, groupUnlocked, outsideUnlocked };
+    return {
+      viewer,
+      journey,
+      groupUnlocked,
+      outsideUnlocked,
+      hasGroup: Boolean(viewer.membership?.groupId),
+    };
   }
   async people(id: string, groupId?: string) {
     return (
@@ -64,7 +70,7 @@ export class HomeMemberService {
     }));
   }
   async home(id: string) {
-    const { viewer, journey, groupUnlocked, outsideUnlocked } =
+    const { viewer, journey, groupUnlocked, outsideUnlocked, hasGroup } =
       await this.context(id);
     const people = await this.people(id, viewer.membership?.groupId);
     // Reuse topology/branch construction only. Every viewer/progress/count value
@@ -136,8 +142,9 @@ export class HomeMemberService {
             specialty: people.filter(
               (p) =>
                 p.currentCode === n.code &&
-                specialtyKey(p.specialization) ===
-                  specialtyKey(viewer.targetJobTitle),
+                (p.inGroup ||
+                  specialtyKey(p.specialization) ===
+                    specialtyKey(viewer.targetJobTitle)),
             ).length,
             all: people.filter((p) => p.currentCode === n.code).length,
           },
@@ -170,6 +177,7 @@ export class HomeMemberService {
         specialization: viewer.targetJobTitle ?? '',
         groupUnlocked,
         outsideUnlocked,
+        hasGroup,
         completedCount: journey.state.completedNodeCodes.length,
         totalNodes: journey.nodes.length,
       },

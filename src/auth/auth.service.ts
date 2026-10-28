@@ -24,6 +24,7 @@ import { AccountLinkRequiredError } from './social-auth.errors';
 import { EmailVerifierService } from './email-verifier.service';
 import { OperationsPolicyService } from '../operations/operations-policy.service';
 import { EmailSenderService } from './email-sender.service';
+import { publicAdminAccess } from '../admin/admin-access';
 
 export const OTP_TTL_MINUTES = 15;
 export const OTP_TTL_MS = OTP_TTL_MINUTES * 60 * 1000;
@@ -38,6 +39,7 @@ export interface PublicUser {
   emailVerified?: boolean;
   targetJobTitle?: string | null;
   verificationDelivery?: 'SENT' | 'FAILED';
+  adminAccess?: ReturnType<typeof publicAdminAccess>;
 }
 
 export interface TokenPair {
@@ -143,13 +145,19 @@ export class AuthService {
     } // Account exists: keep authenticated verification/retry available.
   }
 
-  private toPublicUser(user: PublicUser): PublicUser {
+  private toPublicUser(
+    user: PublicUser & { adminPermissions?: unknown; isRootAdmin?: boolean },
+  ): PublicUser {
     const rawVerified = user.emailVerified ?? false;
     return {
       id: user.id,
       name: user.name,
       email: user.email,
       role: user.role,
+      adminAccess:
+        user.role === UserRole.ADMIN
+          ? publicAdminAccess(user.adminPermissions, user.isRootAdmin === true)
+          : undefined,
       emailVerified: this.shouldRequireEmailOtp() ? rawVerified : true,
       targetJobTitle: user.targetJobTitle ?? null,
     };
@@ -253,6 +261,8 @@ export class AuthService {
               name: true,
               email: true,
               role: true,
+              isRootAdmin: true,
+              adminPermissions: true,
               emailVerified: true,
             },
           });
@@ -300,6 +310,8 @@ export class AuthService {
         email: true,
         passwordHash: true,
         role: true,
+        isRootAdmin: true,
+        adminPermissions: true,
         emailVerified: true,
         emailVerificationExpiresAt: true,
         emailVerificationSentAt: true,
@@ -358,6 +370,8 @@ export class AuthService {
         name: true,
         email: true,
         role: true,
+        isRootAdmin: true,
+        adminPermissions: true,
         emailVerified: true,
         emailVerificationCodeHash: true,
         emailVerificationExpiresAt: true,
@@ -409,6 +423,8 @@ export class AuthService {
         name: true,
         email: true,
         role: true,
+        isRootAdmin: true,
+        adminPermissions: true,
         emailVerified: true,
       },
     });
@@ -497,6 +513,8 @@ export class AuthService {
                 name: true,
                 email: true,
                 role: true,
+                isRootAdmin: true,
+                adminPermissions: true,
                 emailVerified: true,
               },
             },
@@ -517,6 +535,8 @@ export class AuthService {
                 name: true,
                 email: true,
                 role: true,
+                isRootAdmin: true,
+                adminPermissions: true,
                 emailVerified: true,
               },
             });
@@ -548,6 +568,8 @@ export class AuthService {
             name: true,
             email: true,
             role: true,
+            isRootAdmin: true,
+            adminPermissions: true,
             emailVerified: true,
           },
         });
@@ -596,6 +618,8 @@ export class AuthService {
         email: true,
         refreshTokenHash: true,
         role: true,
+        isRootAdmin: true,
+        adminPermissions: true,
         emailVerified: true,
       },
     });
@@ -646,6 +670,8 @@ export class AuthService {
         name: true,
         email: true,
         role: true,
+        isRootAdmin: true,
+        adminPermissions: true,
         emailVerified: true,
         targetJobTitle: true,
       },

@@ -13,6 +13,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AdminGuard } from '../admin/admin.guard';
+import { AdminAccess } from '../admin/admin-access';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CreateSideTaskDto } from './dto/create-side-task.dto';
@@ -26,10 +27,14 @@ export class JourneyEngineController {
   constructor(private readonly journeyEngine: JourneyEngineService) {}
 
   @Get('reports')
-  getReports(@CurrentUser('id') userId: string) { return this.journeyEngine.getReports(userId); }
+  getReports(@CurrentUser('id') userId: string) {
+    return this.journeyEngine.getReports(userId);
+  }
 
   @Post('final-report/complete')
-  completeFinal(@CurrentUser('id') userId: string) { return this.journeyEngine.completeFinalReport(userId); }
+  completeFinal(@CurrentUser('id') userId: string) {
+    return this.journeyEngine.completeFinalReport(userId);
+  }
 
   @Get('state')
   getState(@CurrentUser('id') userId: string) {
@@ -37,7 +42,10 @@ export class JourneyEngineController {
   }
 
   @Post('insights/:code/read')
-  markInsightRead(@CurrentUser('id') userId: string, @Param('code') code: string) {
+  markInsightRead(
+    @CurrentUser('id') userId: string,
+    @Param('code') code: string,
+  ) {
     return this.journeyEngine.markInsightRead(userId, code);
   }
 
@@ -107,24 +115,35 @@ export class NotificationsController {
 
 @Controller('admin/journey')
 @UseGuards(JwtAuthGuard, AdminGuard)
+@AdminAccess('JOURNEY')
 export class AdminJourneyController {
   constructor(private readonly journeyEngine: JourneyEngineService) {}
 
   @Get('reports/demo')
+  @AdminAccess('REPORTS', 'READ')
   getDemoReportPreview(@Query('scenario') scenario?: string) {
     const scenarios: DemoReportScenario[] = [
-      'EMPTY', 'ONE', 'EARLY', 'WEEK1_COMPLETE', 'WEEK3_COMPLETE', 'POPULATED', 'COMPLETED',
+      'EMPTY',
+      'ONE',
+      'EARLY',
+      'WEEK1_COMPLETE',
+      'WEEK3_COMPLETE',
+      'POPULATED',
+      'COMPLETED',
     ];
     if (scenario && !scenarios.includes(scenario as DemoReportScenario)) {
       throw new BadRequestException('Unknown report preview scenario');
     }
     return {
       mode: 'DEMO' as const,
-      report: this.journeyEngine.getDemoReports(scenario as DemoReportScenario | undefined),
+      report: this.journeyEngine.getDemoReports(
+        scenario as DemoReportScenario | undefined,
+      ),
     };
   }
 
   @Get('reports/:userId')
+  @AdminAccess('REPORTS', 'READ')
   async getUserReportPreview(
     @Param('userId', new ParseUUIDPipe()) userId: string,
   ) {
@@ -135,19 +154,18 @@ export class AdminJourneyController {
   }
 
   @Get('nodes')
+  @AdminAccess(['JOURNEY', 'UX_LAB'], 'READ')
   getNodes() {
     return this.journeyEngine.getAdminJourneyNodes();
   }
 
   @Patch('nodes/:code')
-  updateNode(
-    @Param('code') code: string,
-    @Body() dto: UpdateJourneyNodeDto,
-  ) {
+  updateNode(@Param('code') code: string, @Body() dto: UpdateJourneyNodeDto) {
     return this.journeyEngine.updateJourneyNodeByCode(code, dto);
   }
 
   @Get('plot-guidance')
+  @AdminAccess(['JOURNEY', 'UX_LAB'], 'READ')
   getPlotGuidance() {
     return this.journeyEngine.getAdminPlotGuidance();
   }
@@ -190,4 +208,3 @@ export class AdminJourneyController {
     return this.journeyEngine.overrideUserJourneyNode(userId, nodeCode);
   }
 }
-

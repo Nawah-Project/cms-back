@@ -9,11 +9,13 @@ import { AdminService } from '../admin/admin.service';
 import { OperationsPolicyService } from './operations-policy.service';
 import { OperationsCollectorService } from './operations-collector.service';
 import { OperationsSettingsDto } from './operations.dto';
+import { AdminAccess } from '../admin/admin-access';
 class OperationsQuery {
   @IsOptional() @Type(() => Number) @IsIn([15, 60, 1440, 10080]) minutes = 1440;
 }
 @Controller('admin/operations')
 @UseGuards(JwtAuthGuard, AdminGuard)
+@AdminAccess('OPERATIONS')
 export class OperationsController {
   constructor(
     private readonly policy: OperationsPolicyService,

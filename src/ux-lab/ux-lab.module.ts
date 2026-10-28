@@ -30,6 +30,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AdminGuard } from '../admin/admin.guard';
+import { AdminAccess } from '../admin/admin-access';
 import {
   LabEventBatchDto,
   LabExperimentDto,
@@ -54,6 +55,7 @@ class LabPublicController {
 }
 @Controller('admin/ux-lab/v2')
 @UseGuards(JwtAuthGuard, AdminGuard)
+@AdminAccess('UX_LAB')
 class LabAdminController {
   constructor(
     private readonly lab: UxLabService,

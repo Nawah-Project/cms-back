@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { AdminGuard } from '../admin/admin.guard';
+import { AdminAccess } from '../admin/admin-access';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import {
@@ -54,6 +55,7 @@ export class FeedbackController {
 
 @Controller('admin/feedback')
 @UseGuards(JwtAuthGuard, AdminGuard)
+@AdminAccess('MENTORING')
 export class AdminFeedbackController {
   constructor(private readonly feedback: FeedbackService) {}
 

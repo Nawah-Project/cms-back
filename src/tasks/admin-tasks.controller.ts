@@ -22,9 +22,11 @@ import {
 import { TaskQueryDto } from './dto/task-query.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { TasksService } from './tasks.service';
+import { AdminAccess } from '../admin/admin-access';
 
 @Controller('admin')
 @UseGuards(JwtAuthGuard, AdminGuard)
+@AdminAccess('MENTORING')
 export class AdminTasksController {
   constructor(private readonly tasks: TasksService) {}
 

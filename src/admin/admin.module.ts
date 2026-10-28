@@ -1,3 +1,4 @@
+import { OperationsController } from "../operations/operations.controller";
 import { AccountDeletionService } from "./account-deletion.service";
 import { AccountCvCleanupService } from "./account-cv-cleanup.service";
 import { PrismaService } from "../prisma/prisma.service";
@@ -25,6 +26,7 @@ import { AdminNotificationsService } from "./notifications/admin-notifications.s
   ],
   controllers: [
     AdminController,
+    OperationsController,
     UxAnalyticsController,
     AdminNotificationsController,
   ],

@@ -1,3 +1,5 @@
+import { OperationsModule } from '../operations/operations.module';
+import { OperationsPolicyService } from '../operations/operations-policy.service';
 import { GroupsModule } from '../members/groups.module';
 import { GroupAssignmentService } from '../members/group-assignment.service';
 import { Module } from '@nestjs/common';
@@ -9,7 +11,7 @@ import { CV_STORAGE_DIR } from './profile.constants';
 import { ProfileService } from './profile.service';
 
 @Module({
-  imports: [AuthModule, PrismaModule, GroupsModule],
+  imports: [OperationsModule, AuthModule, PrismaModule, GroupsModule],
   controllers: [ProfileController],
   providers: [
     {
@@ -18,8 +20,14 @@ import { ProfileService } from './profile.service';
         prisma: PrismaService,
         storageDir: string,
         groups: GroupAssignmentService,
-      ) => new ProfileService(prisma, storageDir, groups),
-      inject: [PrismaService, 'CV_STORAGE_DIR', GroupAssignmentService],
+        operations: OperationsPolicyService,
+      ) => new ProfileService(prisma, storageDir, groups, operations),
+      inject: [
+        PrismaService,
+        'CV_STORAGE_DIR',
+        GroupAssignmentService,
+        OperationsPolicyService,
+      ],
     },
     { provide: 'CV_STORAGE_DIR', useValue: CV_STORAGE_DIR },
   ],

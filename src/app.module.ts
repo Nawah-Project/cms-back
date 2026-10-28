@@ -1,3 +1,4 @@
+import { OperationsModule } from './operations/operations.module';
 import { UxLabModule } from './ux-lab/ux-lab.module';
 import { Module } from '@nestjs/common';
 import { ExperienceModule } from './experience/experience.module';
@@ -21,6 +22,7 @@ import { JourneyEngineModule } from './journey-engine/journey-engine.module';
 
 @Module({
   imports: [
+    OperationsModule,
     ExperienceModule,
     UxLabModule,
     EventEmitterModule.forRoot({ wildcard: true, delimiter: '.' }),

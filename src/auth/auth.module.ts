@@ -1,3 +1,5 @@
+import { OperationsBrowserController } from '../operations/operations-browser.controller';
+import { OperationsModule } from '../operations/operations.module';
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { AuthController } from './auth.controller';
@@ -9,8 +11,8 @@ import { EmailVerifierService } from './email-verifier.service';
 import { EmailSenderService } from './email-sender.service';
 
 @Module({
-  imports: [JwtModule.register({}), GroupsModule],
-  controllers: [AuthController],
+  imports: [OperationsModule, JwtModule.register({}), GroupsModule],
+  controllers: [AuthController, OperationsBrowserController],
   providers: [
     AuthService,
     JwtAuthGuard,

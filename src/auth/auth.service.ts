@@ -22,6 +22,7 @@ import { RegisterDto } from './dto/register.dto';
 import { GroupAssignmentService } from '../members/group-assignment.service';
 import { AccountLinkRequiredError } from './social-auth.errors';
 import { EmailVerifierService } from './email-verifier.service';
+import { OperationsPolicyService } from '../operations/operations-policy.service';
 import { EmailSenderService } from './email-sender.service';
 
 export const OTP_TTL_MINUTES = 15;
@@ -55,9 +56,16 @@ export class AuthService {
     private readonly groupAssignment: GroupAssignmentService,
     @Optional() emailVerifier?: EmailVerifierService,
     @Optional() emailSender?: EmailSenderService,
+    @Optional() private readonly operationsPolicy?: OperationsPolicyService,
   ) {
     this.emailVerifier = emailVerifier ?? new EmailVerifierService();
     this.emailSender = emailSender ?? new EmailSenderService();
+  }
+
+  async registrationStatus() {
+    return this.operationsPolicy
+      ? this.operationsPolicy.registrationStatus()
+      : { open: true };
   }
 
   private hashRefreshToken(token: string): string {
@@ -212,11 +220,12 @@ export class AuthService {
     dto: RegisterDto,
   ): Promise<{ user: PublicUser; tokens: TokenPair }> {
     const email = dto.email.trim().toLowerCase();
+    await this.operationsPolicy?.assertRegistration();
     await this.emailVerifier.validateEmailAddress(email);
 
     const passwordHash = await bcrypt.hash(dto.password, 12);
     // Specialization is chosen during profile completion; group placement waits for Task zero.
-        const assignOnRegister = false;
+    const assignOnRegister = false;
     const shouldRequireOtp = this.shouldRequireEmailOtp();
     const otpCode = this.generateOtpCode();
     const now = new Date();
@@ -226,6 +235,7 @@ export class AuthService {
     try {
       const user = await this.groupAssignment.withAssignmentLock(
         async (transaction) => {
+          await this.operationsPolicy?.assertRegistration(transaction);
           const created = await transaction.user.create({
             data: {
               name: dto.name.trim(),
@@ -524,6 +534,7 @@ export class AuthService {
         });
         if (emailAccount) throw new AccountLinkRequiredError();
 
+        await this.operationsPolicy?.assertRegistration(transaction);
         const createdUser = await transaction.user.create({
           data: {
             name: input.name?.trim() || providerEmail.split('@')[0],
@@ -645,7 +656,7 @@ export class AuthService {
 
   async verifyAccessToken(
     token: string,
-  ): Promise<{ id: string; email: string }> {
+  ): Promise<{ id: string; email: string; role?: UserRole }> {
     try {
       const payload = await this.jwt.verifyAsync<{
         sub: string;
@@ -658,7 +669,10 @@ export class AuthService {
       });
       if (!payload.sub || payload.tokenType !== 'access')
         throw new Error('Wrong token type');
-      const account = await this.prisma.user.findUnique({ where: { id: payload.sub }, select: { id: true, email: true } });
+      const account = await this.prisma.user.findUnique({
+        where: { id: payload.sub },
+        select: { id: true, email: true, role: true },
+      });
       if (!account) throw new Error('Account no longer exists');
       return account;
     } catch {

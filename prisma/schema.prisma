@@ -678,3 +678,29 @@ model CvDeletionJob {
   lastAttemptAt DateTime? @map("last_attempt_at")
   @@map("cv_deletion_jobs")
 }
+
+model OperationsSettings {
+  id String @id @default("main")
+  revision Int @default(0)
+  value Json
+  updatedBy String? @map("updated_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at")
+  @@map("operations_settings")
+}
+model OperationsSample {
+  id String @id @default(uuid()) @db.Uuid
+  capturedAt DateTime @default(now()) @map("captured_at")
+  value Json
+  @@index([capturedAt])
+  @@map("operations_samples")
+}
+model OperationsSettingsAudit {
+  id String @id @default(uuid()) @db.Uuid
+  actorId String @map("actor_id") @db.Uuid
+  revision Int
+  previous Json
+  next Json
+  createdAt DateTime @default(now()) @map("created_at")
+  @@index([createdAt])
+  @@map("operations_settings_audit")
+}

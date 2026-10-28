@@ -3,6 +3,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
 import { json, urlencoded } from 'express';
+import { OperationsCollectorService } from './operations/operations-collector.service';
 import cookieParser from 'cookie-parser';
 import { validateEnvironment } from './config/env.validation';
 
@@ -14,6 +15,7 @@ async function bootstrap() {
   expressApp.disable('x-powered-by');
   const trustProxy = Number(process.env.TRUST_PROXY || 0);
   if (trustProxy > 0) expressApp.set('trust proxy', trustProxy);
+  app.use(app.get(OperationsCollectorService).middleware());
   app.use(helmet());
   app.use(json({ limit: '1mb' }));
   app.use(urlencoded({ extended: false, limit: '1mb' }));

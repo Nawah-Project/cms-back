@@ -1,3 +1,4 @@
+import { OperationsPolicyService } from '../operations/operations-policy.service';
 import {
   BadRequestException,
   ConflictException,
@@ -116,6 +117,7 @@ export class AdminService {
     @Optional() private readonly adminNotifications?: AdminNotificationsService,
     @Optional() private readonly noResponseProcessor?: NoResponseProcessor,
     @Optional() private readonly profileService?: ProfileService,
+    @Optional() private readonly operationsPolicy?: OperationsPolicyService,
   ) {}
 
   private boundedLimit(value?: number): number {
@@ -1568,13 +1570,10 @@ export class AdminService {
           outcome: ApplicationOutcome.NO_RESPONSE,
         },
       }),
-      this.prisma.application.count({
-        where: {
-          stage: { not: ApplicationStage.CLOSED },
-          outcome: ApplicationOutcome.NONE,
-          createdAt: { lte: sixDaysAgo },
-        },
-      }),
+      this.prisma.$queryRaw<{ count:number }[]>`SELECT count(*)::int AS count FROM applications a
+        LEFT JOIN LATERAL (SELECT t."changedAt" FROM application_stage_transitions t WHERE t."applicationId"=a.id AND t."toStage"=a.stage ORDER BY t."changedAt" DESC,t.id DESC LIMIT 1) latest ON TRUE
+        WHERE a.stage<>'CLOSED'::"ApplicationStage" AND a.outcome='NONE'::"ApplicationOutcome"
+        AND COALESCE(latest."changedAt",a."applicationDate"::date::timestamp,a."createdAt")<=${sixDaysAgo}`.then(rows=>rows[0].count),
       this.prisma.userCv.count(),
       this.prisma.userCvHistory.count(),
       this.prisma.userCv.aggregate({ _sum: { size: true } }),
@@ -1586,11 +1585,13 @@ export class AdminService {
     await this.prisma.$queryRaw`SELECT 1`;
     const latencyMs = Date.now() - startPing;
 
-    const totalFiles = activeCvCount + cvHistoryCount;
+    const physical = this.operationsPolicy ? await this.operationsPolicy.storage() : null;
+    const policy = this.operationsPolicy ? await this.operationsPolicy.settings() : null;
+    const totalFiles = physical?.files ?? activeCvCount + cvHistoryCount;
     const totalBytes =
-      (activeCvSizeSum._sum.size ?? 0) + (cvHistorySizeSum._sum.size ?? 0);
+      physical?.bytes ?? ((activeCvSizeSum._sum.size ?? 0) + (cvHistorySizeSum._sum.size ?? 0));
     const totalMegabytes = Number((totalBytes / (1024 * 1024)).toFixed(2));
-    const limitMegabytes = 500;
+    const limitMegabytes = policy?.cvQuotaMiB ?? 500;
     const storagePercent = Math.min(
       100,
       Number(((totalMegabytes / limitMegabytes) * 100).toFixed(1)),

@@ -8,6 +8,7 @@ import { Request } from 'express';
 export interface AuthenticatedUser {
   id: string;
   email: string;
+  role?: 'USER' | 'ADMIN';
 }
 
 interface RequestWithUser extends Request {

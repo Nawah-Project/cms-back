@@ -33,6 +33,7 @@ import {
   validateCvFileContent,
   type UploadedCvFile,
 } from './cv-file.util';
+import { OperationsPolicyService } from '../operations/operations-policy.service';
 import { GroupAssignmentService } from '../members/group-assignment.service';
 import { toSafeCvMetadata } from './profile.types';
 
@@ -51,6 +52,7 @@ export class ProfileService
     private readonly prisma: PrismaService,
     private readonly storageDir: string,
     private readonly groupAssignment?: GroupAssignmentService,
+    private readonly operationsPolicy?: OperationsPolicyService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -236,8 +238,28 @@ export class ProfileService
         'The CV exceeds the configured size limit',
       );
     validateCvFileContent(file);
+    if (this.operationsPolicy)
+      return this.operationsPolicy.withCvBudget(userId, file.buffer, (db) =>
+        this.uploadCvFile(userId, file, db),
+      );
+    return this.uploadCvFile(userId, file);
+  }
+
+  private async uploadCvFile(
+    userId: string,
+    file: UploadedCvFile,
+    budgetDb?: Prisma.TransactionClient,
+  ) {
+    if (!file) throw new BadRequestException('A CV file is required');
+    if (file.size > CV_MAX_FILE_SIZE_BYTES)
+      throw new PayloadTooLargeException(
+        'The CV exceeds the configured size limit',
+      );
+    validateCvFileContent(file);
     const contentHash = createHash('sha256').update(file.buffer).digest('hex');
-    const legacy = await this.prisma.userCv.findUnique({ where: { userId } });
+    const legacy = await (budgetDb ?? this.prisma).userCv.findUnique({
+      where: { userId },
+    });
     let legacyMatches = false;
     if (
       legacy &&
@@ -262,55 +284,57 @@ export class ProfileService
     try {
       for (let attempt = 0; ; attempt++) {
         try {
-          const result = await this.prisma.$transaction(
-            async (tx) => {
-              const previous = await tx.userCv.findUnique({
+          const save = async (tx: Prisma.TransactionClient) => {
+            const previous = await tx.userCv.findUnique({
+              where: { userId },
+            });
+            if (
+              previous &&
+              (previous.contentHash === contentHash ||
+                (legacyMatches && previous.storageKey === legacy?.storageKey))
+            ) {
+              return { cv: previous, reused: true };
+            }
+            const [state, latest] = await Promise.all([
+              tx.userJourneyState.findUnique({ where: { userId } }),
+              tx.userCvHistory.findFirst({
                 where: { userId },
-              });
-              if (
-                previous &&
-                (previous.contentHash === contentHash ||
-                  (legacyMatches && previous.storageKey === legacy?.storageKey))
-              ) {
-                return { cv: previous, reused: true };
-              }
-              const [state, latest] = await Promise.all([
-                tx.userJourneyState.findUnique({ where: { userId } }),
-                tx.userCvHistory.findFirst({
-                  where: { userId },
-                  orderBy: { versionNumber: 'desc' },
-                }),
-              ]);
-              const versionNumber =
-                previous || latest
-                  ? Math.max(
-                      state?.cvVersionNumber ?? 0,
-                      latest?.versionNumber ?? 0,
-                    ) + 1
-                  : 1;
-              const data = {
-                originalName: sanitizeCvOriginalName(file.originalname),
-                mimeType: CV_MIME_TYPE,
-                size: file.buffer.length,
-                storageKey,
-              };
-              await tx.userCvHistory.create({
-                data: { userId, versionNumber, ...data },
-              });
-              if (state)
-                await tx.userJourneyState.update({
-                  where: { userId },
-                  data: { cvVersionNumber: versionNumber },
-                });
-              const cv = await tx.userCv.upsert({
+                orderBy: { versionNumber: 'desc' },
+              }),
+            ]);
+            const versionNumber =
+              previous || latest
+                ? Math.max(
+                    state?.cvVersionNumber ?? 0,
+                    latest?.versionNumber ?? 0,
+                  ) + 1
+                : 1;
+            const data = {
+              originalName: sanitizeCvOriginalName(file.originalname),
+              mimeType: CV_MIME_TYPE,
+              size: file.buffer.length,
+              storageKey,
+            };
+            await tx.userCvHistory.create({
+              data: { userId, versionNumber, ...data },
+            });
+            if (state)
+              await tx.userJourneyState.update({
                 where: { userId },
-                create: { userId, ...data, contentHash },
-                update: { ...data, contentHash, uploadedAt: new Date() },
+                data: { cvVersionNumber: versionNumber },
               });
-              return { cv, reused: false };
-            },
-            { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-          );
+            const cv = await tx.userCv.upsert({
+              where: { userId },
+              create: { userId, ...data, contentHash },
+              update: { ...data, contentHash, uploadedAt: new Date() },
+            });
+            return { cv, reused: false };
+          };
+          const result = budgetDb
+            ? await save(budgetDb)
+            : await this.prisma.$transaction(save, {
+                isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+              });
           if (result.reused) await this.deleteStoredCv(storageKey);
           return toSafeCvMetadata(result.cv);
         } catch (error) {

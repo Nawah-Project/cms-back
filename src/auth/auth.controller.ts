@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   HttpCode,
   HttpStatus,
   Post,
@@ -19,6 +20,7 @@ import { LoginDto } from './dto/login.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { SocialAuthService } from './social-auth.service';
+import { RegistrationClosedException } from '../operations/operations-policy.service';
 import { AccountLinkRequiredError } from './social-auth.errors';
 import {
   clearOAuthStateCookies,
@@ -33,6 +35,12 @@ export class AuthController {
     private readonly auth: AuthService,
     private readonly socialAuth: SocialAuthService,
   ) {}
+
+  @Get('registration-status')
+  @Header('Cache-Control', 'no-store')
+  registrationStatus() {
+    return this.auth.registrationStatus();
+  }
 
   @Get('google')
   @UseGuards(ThrottlerGuard)
@@ -114,9 +122,7 @@ export class AuthController {
   @UseGuards(JwtAuthGuard, ThrottlerGuard)
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
-  async resendVerification(
-    @Req() request: Request & { user: { id: string } },
-  ) {
+  async resendVerification(@Req() request: Request & { user: { id: string } }) {
     return this.auth.resendVerification(request.user.id);
   }
 
@@ -169,6 +175,8 @@ export class AuthController {
     error: unknown,
     fallback: 'google_unavailable',
   ): string {
+    if (error instanceof RegistrationClosedException)
+      return 'registration_closed';
     return error instanceof AccountLinkRequiredError
       ? 'account_link_required'
       : fallback;

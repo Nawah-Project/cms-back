@@ -28,6 +28,7 @@ import {
 } from './reporting.util';
 import { createHash } from 'node:crypto';
 import { cvFoundationStatus, CV_FOUNDATION_CODE } from './cv-foundation.util';
+import { guidanceProgress, RESEARCH_TEST_USER_ID } from './guidance-progress.util';
 import { persistProfessionalChange } from './professional-change.util';
 import { isWeeklyReflection, professionalTasksUnlocked } from './journey-rules';
 import { GroupAssignmentService } from '../members/group-assignment.service';
@@ -1387,30 +1388,38 @@ export class JourneyEngineService implements OnModuleInit {
       }
     }
 
-    const userStates = await this.prisma.userJourneyState.findMany({
-      select: {
-        userId: true,
-        currentWeek: true,
-        currentNodeCode: true,
-        completedNodeCodes: true,
-        unlockedInsightCodes: true,
-      },
-    });
-
-    const totalMembers = userStates.length || 1;
+    const [users, configuredNodes] = await Promise.all([
+      this.prisma.user.findMany({
+        where: { role: 'USER', id: { not: RESEARCH_TEST_USER_ID } },
+        select: {
+          id: true, name: true, journeyState: true, portfolioUrl: true, targetJobTitle: true, cv: { select: { id: true } },
+          membership: { select: { group: { select: { name: true } } } },
+          cvHistory: { select: { versionNumber: true, uploadedAt: true }, orderBy: { versionNumber: 'desc' }, take: 2 },
+        },
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.journeyNode.findMany(),
+    ]);
+    const nodes = configuredNodes.length ? configuredNodes : JOURNEY_V4_NODES;
+    const totalMembers = users.length;
+    const audience = (code: string, advanced = false) => users.map(user => {
+      const recorded = dbPosts.filter(post => post.unlockTriggerCode === code && post.reads.some(read => read.userId === user.id)).map(post => post.unlockTriggerCode!);
+      return {
+        id: user.id, name: user.name, groupName: user.membership?.group.name ?? null,
+        currentNodeCode: user.journeyState?.currentNodeCode ?? null,
+        ...guidanceProgress(code, user.journeyState, user.cvHistory, recorded, advanced, nodes.find(n => n.code === user.journeyState?.currentNodeCode), !!(user.cv && user.portfolioUrl && user.targetJobTitle)),
+      };
+    }).filter(user => user.available);
 
     const items = JOURNEY_GUIDANCE_CATALOG.map((seed) => {
       const dbPost = dbPostsByCode.get(seed.code);
 
-      const unlockedUsers = userStates.filter((u) => {
-        if (u.unlockedInsightCodes.includes(seed.code)) return true;
-        if (seed.code === 'INSIGHT_TASK_0_CV_BASE') return true;
-        if (seed.weekNumber <= u.currentWeek) return true;
-        return false;
-      });
-
-      const unlockedCount = unlockedUsers.length;
-      const readsCount = dbPost?.reads?.length ?? 0;
+      const members = audience(seed.code, seed.isAdvanced);
+      const unlockedCount = members.length;
+      const readsCount = members.filter(member => member.read).length;
+      const completedCount = members.filter(member => member.completed).length;
+      const pendingCount = members.filter(member => member.pending).length;
+      const blockingCount = members.filter(member => member.blocking).length;
 
       return {
         id: dbPost?.id ?? `catalog-${seed.code}`,
@@ -1419,18 +1428,20 @@ export class JourneyEngineService implements OnModuleInit {
         weekNumber: seed.weekNumber,
         isAdvanced: seed.isAdvanced ?? false,
         title: dbPost?.title ?? seed.titleAr,
-        titleAr: seed.titleAr,
+        titleAr: dbPost?.title ?? seed.titleAr,
         titleEn: seed.titleEn,
         content: dbPost?.content ?? seed.contentAr ?? seed.summaryAr,
         summaryAr: seed.summaryAr,
         summaryEn: seed.summaryEn,
         promptTemplate: dbPost?.promptTemplate ?? seed.promptTemplateAr,
-        promptTemplateAr: seed.promptTemplateAr,
+        promptTemplateAr: dbPost?.promptTemplate ?? seed.promptTemplateAr,
         promptTemplateEn: seed.promptTemplateEn,
         tierLevel: dbPost?.tierLevel ?? (seed.isAdvanced ? 'ADVANCED' : 'BASIC'),
         unlockedCount,
         readsCount,
-        unlockedPercent: Math.round((unlockedCount / totalMembers) * 100),
+        completedCount, pendingCount, blockingCount, members,
+        totalMembers, required: seed.code === CV_FOUNDATION_CODE,
+        unlockedPercent: totalMembers ? Math.round((unlockedCount / totalMembers) * 100) : 0,
         readPercent: unlockedCount > 0 ? Math.round((readsCount / unlockedCount) * 100) : 0,
         isCustomized: Boolean(dbPost),
         updatedAt: dbPost?.updatedAt?.toISOString() ?? null,
@@ -1443,6 +1454,7 @@ export class JourneyEngineService implements OnModuleInit {
         post.unlockTriggerCode &&
         !JOURNEY_GUIDANCE_CATALOG.some((s) => s.code === post.unlockTriggerCode)
       ) {
+        const members = audience(post.unlockTriggerCode, post.tierLevel === 'ADVANCED');
         items.push({
           id: post.id,
           code: post.unlockTriggerCode,
@@ -1459,10 +1471,13 @@ export class JourneyEngineService implements OnModuleInit {
           promptTemplateAr: post.promptTemplate || '',
           promptTemplateEn: post.promptTemplate || '',
           tierLevel: post.tierLevel || 'BASIC',
-          unlockedCount: totalMembers,
-          readsCount: post.reads?.length ?? 0,
-          unlockedPercent: 100,
-          readPercent: Math.round(((post.reads?.length ?? 0) / totalMembers) * 100),
+          unlockedCount: members.length,
+          readsCount: members.filter(member => member.read).length,
+          completedCount: members.filter(member => member.completed).length,
+          pendingCount: members.filter(member => member.pending).length,
+          blockingCount: 0, members, totalMembers, required: false,
+          unlockedPercent: totalMembers ? Math.round(members.length / totalMembers * 100) : 0,
+          readPercent: members.length ? Math.round(members.filter(member => member.read).length / members.length * 100) : 0,
           isCustomized: true,
           updatedAt: post.updatedAt.toISOString(),
         });

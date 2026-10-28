@@ -10,13 +10,14 @@ import { JOURNEY_V4_NODES } from '../journey-engine/journey-v4.seed';
 import { JOURNEY_GUIDANCE_CATALOG } from '../feedback/journey-guidance.catalog';
 import { isWeeklyReflection } from '../journey-engine/journey-rules';
 import { classifyJourney, metricRate } from './journey-observatory.model';
+import { guidanceProgress, RESEARCH_TEST_USER_ID } from '../journey-engine/guidance-progress.util';
 import {
   JourneyMapQuery,
   JourneyObservationDto,
   JourneyObservationQuery,
   JourneyObservationStatusDto,
 } from './journey-observatory.dto';
-const QA_ID = 'aeef0606-17bb-47b6-a239-4a44526303b4';
+const QA_ID = RESEARCH_TEST_USER_ID;
 const lastDate = (dates: (Date | null | undefined)[]) => {
   const valid = dates.filter((d): d is Date => !!d);
   return valid.length
@@ -232,6 +233,7 @@ export class JourneyObservatoryService {
         currentCode: !profileReady
           ? 'ONBOARDING'
           : (state?.currentNodeCode ?? 'ONBOARDING'),
+        guidanceCode: status.gate === 'CV' ? 'INSIGHT_TASK_0_CV_BASE' : null,
         currentWeek: state?.currentWeek ?? 0,
         completedCodes: state?.completedNodeCodes ?? [],
         startedAt: state?.currentNodeStartedAt.toISOString() ?? null,
@@ -272,10 +274,10 @@ export class JourneyObservatoryService {
       },
       ...nodes,
     ].map((n) => {
-      const here = members.filter((m) => m.currentCode === n.code),
+      const here = members.filter((m) => !m.guidanceCode && m.currentCode === n.code),
         entered = members.filter(
           (m) =>
-            m.currentCode === n.code ||
+            (!m.guidanceCode && m.currentCode === n.code) ||
             m.completedCodes.includes(n.code) ||
             n.code === 'ONBOARDING',
         ),
@@ -318,15 +320,15 @@ export class JourneyObservatoryService {
       );
       const matched = nodes.find((n) => n.unlocksInsightCode === seed.code),
         isFoundation = seed.code === 'INSIGHT_TASK_0_CV_BASE';
-      const unlocked = members.filter(
-        (m) =>
-          m.unlockedCodes.includes(seed.code) ||
-          (seed.isAdvanced === true &&
-            selectedUsers.find((u) => u.id === m.id)?.journeyState
-              ?.hasUnlockedAdvPrep === true) ||
-          (isFoundation &&
-            (m.completedCodes.includes('TASK_0') || m.currentWeek >= 1)),
-      );
+      const participants = members.map(m => {
+        const user = selectedUsers.find(u => u.id === m.id)!;
+        return {
+          id: m.id, name: m.name, groupName: m.group?.name ?? null,
+          currentNodeCode: user.journeyState?.currentNodeCode ?? null,
+          ...guidanceProgress(seed.code, user.journeyState, user.cvHistory, m.readCodes, seed.isAdvanced, nodes.find(n => n.code === user.journeyState?.currentNodeCode), !!(user.cv && user.portfolioUrl && user.targetJobTitle)),
+        };
+      }).filter(m => m.available);
+      const unlocked = members.filter(m => participants.some(p => p.id === m.id));
       const read = unlocked.filter((m) => m.readCodes.includes(seed.code));
       const actionKind = isFoundation
         ? 'CV'
@@ -379,6 +381,11 @@ export class JourneyObservatoryService {
         titleEn: seed.titleEn,
         unlocked: unlocked.length,
         read: read.length,
+        completed: participants.filter(m => m.completed).length,
+        pending: participants.filter(m => m.pending).length,
+        current: members.filter(m => m.guidanceCode === seed.code).length,
+        required: isFoundation,
+        members: participants,
         readRate: metricRate(read.length, unlocked.length),
         unreadIds: unlocked
           .filter((m) => !m.readCodes.includes(seed.code))
@@ -387,7 +394,7 @@ export class JourneyObservatoryService {
         applied,
         actionKind,
         foundationCompleted: isFoundation
-          ? read.filter((m) => m.foundationCompleted).length
+          ? participants.filter((m) => m.completed).length
           : null,
       };
     });
@@ -397,7 +404,7 @@ export class JourneyObservatoryService {
       return {
         week,
         current: members.filter((m) =>
-          list.some((n) => n.code === m.currentCode),
+          m.guidanceCode ? guidance.some(g => g.code === m.guidanceCode && g.week === week) : list.some((n) => n.code === m.currentCode),
         ).length,
         entered: members.filter((m) =>
           codes.some(

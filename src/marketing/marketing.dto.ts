@@ -13,6 +13,7 @@ import { Type } from 'class-transformer';
 export const MARKETING_EVENT_TYPES = [
   'SESSION_START',
   'PAGE_VIEW',
+  'PULSE',
   'SIGNUP_COMPLETED',
   'ONBOARDING_COMPLETED',
 ] as const;

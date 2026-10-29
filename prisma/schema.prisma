@@ -255,6 +255,7 @@ model MarketingEvent {
   referrerHost String?  @map("referrer_host") @db.VarChar(180)
   deviceType   String   @map("device_type") @db.VarChar(16)
   country      String?  @db.VarChar(2)
+  conversionKey String? @unique @map("conversion_key") @db.VarChar(64)
   createdAt    DateTime @default(now()) @map("created_at")
 
   @@index([createdAt])

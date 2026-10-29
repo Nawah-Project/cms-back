@@ -10,6 +10,7 @@ export const ADMIN_SECTIONS = [
   'JOURNEY',
   'REPORTS',
   'UX_LAB',
+  'MARKETING',
   'OPERATIONS',
 ] as const;
 

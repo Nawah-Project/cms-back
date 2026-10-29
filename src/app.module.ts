@@ -19,6 +19,7 @@ import { TasksModule } from './tasks/tasks.module';
 import { FeedbackModule } from './feedback/feedback.module';
 import { ObservabilityModule } from './observability/observability.module';
 import { JourneyEngineModule } from './journey-engine/journey-engine.module';
+import { MarketingModule } from './marketing/marketing.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { JourneyEngineModule } from './journey-engine/journey-engine.module';
     FeedbackModule,
     ObservabilityModule,
     JourneyEngineModule,
+    MarketingModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

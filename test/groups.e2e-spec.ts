@@ -6,6 +6,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { GroupAssignmentService } from '../src/members/group-assignment.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { prepareProgramMember } from './program-fixture';
 import { resetTestDatabase } from './reset-test-database';
 
 describe('Automatic group assignment (PostgreSQL e2e)', () => {
@@ -14,9 +15,7 @@ describe('Automatic group assignment (PostgreSQL e2e)', () => {
   let prisma: PrismaService;
   let assignment: GroupAssignmentService;
 
-  const previousAssignment=process.env.ASSIGN_GROUP_ON_REGISTER;
   beforeAll(async () => {
-    process.env.ASSIGN_GROUP_ON_REGISTER='true';
     const module = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -36,18 +35,23 @@ describe('Automatic group assignment (PostgreSQL e2e)', () => {
     assignment = app.get(GroupAssignmentService);
   });
 
-  afterAll(async () => { if(previousAssignment===undefined)delete process.env.ASSIGN_GROUP_ON_REGISTER;else process.env.ASSIGN_GROUP_ON_REGISTER=previousAssignment;await app?.close(); });
+  afterAll(async () => { await app?.close(); });
 
-  const registration = (number: number) =>
-    request(server)
+  const registration = async (number: number) => {
+    const response = await request(server)
       .post('/auth/register')
       .send({
         name: `Member ${number}`,
-        email: `member-${number}@cohorts.example.com`,
+        email: `member-${number}@example.com`,
         password: 'SecurePass123!',
-      });
+      }).expect(201);
+    expect(await prisma.membership.findUnique({ where: { userId: response.body.id } })).toBeNull();
+    await prepareProgramMember(prisma, response.body.id as string);
+    await assignment.assignUserToGroup(response.body.id as string);
+    return response;
+  };
 
-  it('assigns 30 sequential registrations to three full groups and serializes concurrent registrations safely', async () => {
+  it('assigns ready members sequentially to three full groups and serializes concurrent registrations safely', async () => {
     const sequentialResponses: { status: number }[] = [];
     for (let number = 1; number <= 21; number += 1)
       sequentialResponses.push(await registration(number));
@@ -66,7 +70,7 @@ describe('Automatic group assignment (PostgreSQL e2e)', () => {
         email: {
           in: Array.from(
             { length: 21 },
-            (_, i) => `member-${i + 1}@cohorts.example.com`,
+            (_, i) => `member-${i + 1}@example.com`,
           ),
         },
       },
@@ -84,7 +88,7 @@ describe('Automatic group assignment (PostgreSQL e2e)', () => {
     );
 
     for (let number = 22; number <= 29; number += 1)
-      await registration(number).expect(201);
+      expect((await registration(number)).status).toBe(201);
     const concurrentResponses = await Promise.all([
       registration(30),
       registration(31),
@@ -129,7 +133,7 @@ describe('Automatic group assignment (PostgreSQL e2e)', () => {
             await prisma.user.create({
               data: {
                 name: 'Overflow',
-                email: 'overflow@cohorts.example.com',
+                email: 'overflow@example.com',
                 passwordHash: 'test-hash',
               },
             })
@@ -145,7 +149,7 @@ describe('Automatic group assignment (PostgreSQL e2e)', () => {
       where: {
         userId: (
           await prisma.user.findUniqueOrThrow({
-            where: { email: 'member-1@cohorts.example.com' },
+            where: { email: 'member-1@example.com' },
           })
         ).id,
       },
@@ -153,8 +157,9 @@ describe('Automatic group assignment (PostgreSQL e2e)', () => {
     const legacyUser = await prisma.user.create({
       data: {
         name: 'Legacy member',
-        email: 'legacy@cohorts.example.com',
+        email: 'legacy@example.com',
         passwordHash: 'already-hashed',
+        targetJobTitle: 'Engineer',
       },
     });
     await assignment.assignUserToGroup(legacyUser.id);
@@ -171,23 +176,26 @@ describe('Automatic group assignment (PostgreSQL e2e)', () => {
     );
   });
 
-  it('rolls back user creation and group assignment together when assignment fails', async () => {
-    const spy = jest
-      .spyOn(assignment, 'assignUser')
-      .mockRejectedValueOnce(new Error('assignment failed'));
-    await request(server)
-      .post('/auth/register')
-      .send({
-        name: 'Rollback Member',
-        email: 'rollback@cohorts.example.com',
-        password: 'SecurePass123!',
-      })
-      .expect(500);
-    spy.mockRestore();
-    expect(
-      await prisma.user.findUnique({
-        where: { email: 'rollback@cohorts.example.com' },
-      }),
-    ).toBeNull();
+  it('rolls back group creation and membership together when placement fails', async () => {
+    const member = await prisma.user.create({
+      data: { name: 'Rollback', email: 'rollback@example.com', passwordHash: 'synthetic', targetJobTitle: 'Unique rollback specialty' },
+    });
+    const groupsBefore = await prisma.group.count();
+    await expect(assignment.withAssignmentLock(async (tx) => {
+      await assignment.assignUser(tx, member.id);
+      throw new Error('failure after placement');
+    })).rejects.toThrow('failure after placement');
+    expect(await prisma.membership.findUnique({ where: { userId: member.id } })).toBeNull();
+    expect(await prisma.group.count()).toBe(groupsBefore);
+  });
+
+  it('requires a specialization and isolates different specializations', async () => {
+    const unknown = await prisma.user.create({ data: { name: 'Unknown', email: 'unknown@example.com', passwordHash: 'synthetic' } });
+    await expect(assignment.assignUserToGroup(unknown.id)).rejects.toThrow('Choose a specialization');
+    const designer = await prisma.user.create({ data: { name: 'Designer', email: 'designer@example.com', passwordHash: 'synthetic', targetJobTitle: 'UI/UX Designer' } });
+    const groupId = await assignment.assignUserToGroup(designer.id);
+    const members = await prisma.membership.findMany({ where: { groupId }, include: { user: true } });
+    expect(members).toHaveLength(1);
+    expect(members[0].user.targetJobTitle).toBe('UI/UX Designer');
   });
 });

@@ -62,7 +62,7 @@ describe('Admin report preview (disposable PostgreSQL e2e)', () => {
     const admin = await register('admin');
     await prisma.user.update({
       where: { id: admin.userId },
-      data: { role: UserRole.ADMIN },
+      data: { role: UserRole.ADMIN, adminPermissions: { REPORTS: 'WRITE' } },
     });
     const member = await register('member');
     await prepareProgramMember(prisma, member.userId, 1);
@@ -156,10 +156,9 @@ describe('Admin report preview (disposable PostgreSQL e2e)', () => {
       applicationsBefore,
     );
 
-    const normalMemberReport = await member.agent
-      .get('/journey/reports')
-      .expect(200);
-    expect(normalMemberReport.body.weeks).toEqual(actual.body.report.weeks);
+    // Admin preview can read locked reports; the member still needs the CV guidance.
+    const lockedReport = await member.agent.get('/journey/reports').expect(403);
+    expect(lockedReport.body.code).toBe('CV_FOUNDATION_REQUIRED');
     expect(
       await prisma.userJourneyState.findUniqueOrThrow({
         where: { userId: member.userId },
@@ -170,14 +169,13 @@ describe('Admin report preview (disposable PostgreSQL e2e)', () => {
     ).toBe(applicationsBefore);
   });
 
-  it('serves an empty report read without creating journey state', async () => {
+  it('keeps a locked report read from creating journey state', async () => {
     const member = await register('without-journey-state');
     await prisma.userJourneyState.deleteMany({ where: { userId: member.userId } });
 
-    const report = await journey.getReports(member.userId);
-
-    expect(report.overall.logged).toBe(0);
-    expect(report.currentNodeCode).toBe('TASK_0');
+    await expect(journey.getReports(member.userId)).rejects.toMatchObject({
+      response: { code: 'CV_FOUNDATION_REQUIRED' },
+    });
     expect(
       await prisma.userJourneyState.findUnique({
         where: { userId: member.userId },

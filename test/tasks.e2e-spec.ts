@@ -42,7 +42,7 @@ describe('Professional development tasks (e2e)', () => {
         .post('/auth/register')
         .send({
           name: key,
-          email: `${key}@tasks.example.com`,
+          email: `${key}@example.com`,
           password: 'SecurePass123!',
         })
         .expect(201);
@@ -60,7 +60,7 @@ describe('Professional development tasks (e2e)', () => {
     strangerId = strangerAccount.id;
     await prisma.user.update({
       where: { id: adminId },
-      data: { role: UserRole.ADMIN },
+      data: { role: UserRole.ADMIN, adminPermissions: { MENTORING: 'WRITE' } },
     });
   });
 

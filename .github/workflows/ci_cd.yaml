@@ -61,7 +61,7 @@ jobs:
         env:
           IMAGE: nawah/api:sha-${{ github.sha }}
         run: |
-          docker run -d --name ci-runtime --network host -e NODE_ENV=production -e PORT=13000 -e DATABASE_URL -e JWT_ACCESS_SECRET -e JWT_REFRESH_SECRET -e FRONTEND_ORIGIN -e COOKIE_SECURE "$IMAGE"
+          docker run -d --name ci-runtime -e METRICS_TOKEN=ephemeral_ci_metrics_only --network host -e NODE_ENV=production -e PORT=13000 -e DATABASE_URL -e JWT_ACCESS_SECRET -e JWT_REFRESH_SECRET -e FRONTEND_ORIGIN -e COOKIE_SECURE "$IMAGE"
           for attempt in $(seq 1 50); do
             if curl --fail --silent http://127.0.0.1:13000/health >/dev/null; then exit 0; fi
             sleep 2
@@ -78,6 +78,7 @@ jobs:
         with:
           name: candidate-${{ github.sha }}
           path: candidate/
+          overwrite: true
           retention-days: 1
           compression-level: 0
           if-no-files-found: error

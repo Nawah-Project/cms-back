@@ -8,6 +8,7 @@ import { ApplicationOutcome } from '../src/applications/enums/application-outcom
 import { ApplicationStage } from '../src/applications/enums/application-stage.enum';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { prepareProgramMember } from './program-fixture';
+import { GroupAssignmentService } from '../src/members/group-assignment.service';
 import { resetTestDatabase } from './reset-test-database';
 
 interface ProgressMember {
@@ -49,9 +50,7 @@ describe('Members progress (e2e)', () => {
   const agents = new Map<string, ReturnType<typeof request.agent>>();
   const ids = new Map<string, string>();
 
-  const previousAssignment=process.env.ASSIGN_GROUP_ON_REGISTER;
   beforeAll(async () => {
-    process.env.ASSIGN_GROUP_ON_REGISTER='true';
     process.env.NODE_ENV = 'test';
     const module = await Test.createTestingModule({
       imports: [AppModule],
@@ -87,11 +86,12 @@ describe('Members progress (e2e)', () => {
         .post('/auth/register')
         .send({
           name: account.name,
-          email: `${account.key}@members.example.com`,
+          email: `${account.key}@example.com`,
           password: 'SecurePass123!',
         })
         .expect(201);
       await prepareProgramMember(prisma, result.body.id as string);
+      await app.get(GroupAssignmentService).assignUserToGroup(result.body.id as string);
       agents.set(account.key, agent);
       ids.set(account.key, result.body.id as string);
     }
@@ -371,7 +371,7 @@ describe('Members progress (e2e)', () => {
     }
     const serialized = JSON.stringify(response.body);
     for (const secret of [
-      '@members.example.com',
+      '@example.com',
       'PRIVATE COMPANY',
       'PRIVATE TITLE',
       'PRIVATE LOCATION',

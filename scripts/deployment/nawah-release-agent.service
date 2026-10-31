@@ -1,0 +1,15 @@
+[Unit]
+Description=Nawah approved release downloader and image-only deployer
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /data/cms/deployment/agent.py poll
+WorkingDirectory=/data/cms/deployment
+UMask=0077
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=3h
+NoNewPrivileges=true
+

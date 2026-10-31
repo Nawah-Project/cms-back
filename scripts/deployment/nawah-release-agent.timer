@@ -1,0 +1,11 @@
+[Unit]
+Description=Check approved Nawah releases every five minutes
+
+[Timer]
+OnBootSec=2min
+OnCalendar=*:0/5
+Persistent=true
+Unit=nawah-release-agent.service
+
+[Install]
+WantedBy=timers.target

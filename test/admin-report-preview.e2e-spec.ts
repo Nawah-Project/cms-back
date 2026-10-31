@@ -178,8 +178,8 @@ describe('Admin report preview (disposable PostgreSQL e2e)', () => {
       response: { code: 'CV_FOUNDATION_REQUIRED' },
     });
     const preview = await journey.getAdminReportPreview(member.userId);
-    expect(preview.report.overall.logged).toBe(0);
-    expect(preview.report.currentNodeCode).toBe('TASK_0');
+    expect(preview.overall.logged).toBe(0);
+    expect(preview.currentNodeCode).toBe('TASK_0');
     expect(
       await prisma.userJourneyState.findUnique({
         where: { userId: member.userId },

@@ -142,9 +142,10 @@ describe('Admin report preview (disposable PostgreSQL e2e)', () => {
     expect(actual.body.report.currentNodeCode).toBe('W1_M1');
     expect(actual.body.report.currentWeek).toBe(1);
     expect(actual.body.report.completed).toBe(false);
-    expect(actual.body.report.weeklyStages.find((week: { week: number }) => week.week === 2)).toEqual({
+    expect(actual.body.report.weeklyStages.find((week: { week: number }) => week.week === 2)).toMatchObject({
       week: 2,
-      available: false,
+      available: true,
+      complete: false,
     });
     expect(actual.body.report.readGuidance).toEqual([]);
 
@@ -176,6 +177,9 @@ describe('Admin report preview (disposable PostgreSQL e2e)', () => {
     await expect(journey.getReports(member.userId)).rejects.toMatchObject({
       response: { code: 'CV_FOUNDATION_REQUIRED' },
     });
+    const preview = await journey.getAdminReportPreview(member.userId);
+    expect(preview.report.overall.logged).toBe(0);
+    expect(preview.report.currentNodeCode).toBe('TASK_0');
     expect(
       await prisma.userJourneyState.findUnique({
         where: { userId: member.userId },

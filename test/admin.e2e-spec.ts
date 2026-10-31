@@ -55,7 +55,7 @@ describe('Admin group management and monitoring (PostgreSQL e2e)', () => {
     const admin = await register('admin');
     await prisma.user.update({
       where: { id: admin.userId },
-      data: { role: UserRole.ADMIN, adminPermissions: { COMMUNITY: 'WRITE' } },
+      data: { role: UserRole.ADMIN, adminPermissions: { COMMUNITY: 'WRITE', OVERVIEW: 'READ' } },
     });
     const firstGroupMembers: Array<{
       agent: ReturnType<typeof request.agent>;

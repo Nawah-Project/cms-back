@@ -64,3 +64,5 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 # Local and CI environment files; keep the documented template.
 .env.*
 !.env.example
+__pycache__/
+/candidate/

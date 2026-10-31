@@ -92,16 +92,16 @@ enum UserRole {
 
 enum JourneyNodeType {
   ONBOARDING_QUEST // المهمة صفر
-  MAIN_QUEST       // المهمات 1 إلى 5 في كل أسبوع
-  REVIEW_STATION   // محطة اليوم السابع (التقييم والتعديل 1, 2, 3)
-  FINAL_REPORT     // التقرير النهائي في نهاية الأسبوع الرابع
+  MAIN_QUEST // المهمات 1 إلى 5 في كل أسبوع
+  REVIEW_STATION // محطة اليوم السابع (التقييم والتعديل 1, 2, 3)
+  FINAL_REPORT // التقرير النهائي في نهاية الأسبوع الرابع
 }
 
 enum SideTaskType {
-  LINKEDIN_POST    // منشور
+  LINKEDIN_POST // منشور
   OUTREACH_CONTACT // تواصل وبناء علاقات
-  WEEKLY_REVIEW    // تسليم مراجعة وتعديل اليوم السابع
-  USER_CHANGE     // Explicit professional change log; never completes a review
+  WEEKLY_REVIEW // تسليم مراجعة وتعديل اليوم السابع
+  USER_CHANGE // Explicit professional change log; never completes a review
 }
 
 enum OutreachStatus {
@@ -112,42 +112,180 @@ enum OutreachStatus {
 }
 
 model User {
-  id                          String                       @id @default(uuid()) @db.Uuid
-  name                        String
-  email                       String                       @unique
-  passwordHash                String?
-  refreshTokenHash            String?
-  role                        UserRole                     @default(USER)
-  emailVerified               Boolean                      @default(false)
-  emailVerifiedAt             DateTime?
-  emailVerificationCodeHash   String?                      @db.VarChar(128)
-  emailVerificationExpiresAt  DateTime?
-  emailVerificationSentAt     DateTime?
-  emailVerificationAttempts   Int                          @default(0)
-  portfolioUrl                String?                      @db.VarChar(2048)
-  targetJobTitle              String?                      @db.VarChar(150)
-  preferredLocations          String[]                     @default([])
-  uxVariant                   String?                      @map("ux_variant") @db.VarChar(10)
-  createdAt                   DateTime                     @default(now())
-  updatedAt                   DateTime                     @updatedAt
-  membership          Membership?
-  applications        Application[]
-  transitions         ApplicationStageTransition[]
-  authIdentities      AuthIdentity[]
-  cv                  UserCv?
-  cvHistory           UserCvHistory[]
-  assignedTasks       Task[]                       @relation("TaskAssignee")
-  createdTasks        Task[]                       @relation("TaskCreator")
-  taskNotes           TaskNote[]                   @relation("TaskNoteAuthor")
-  authoredFeedback    FeedbackPost[]               @relation("FeedbackAuthor")
-  targetedFeedback    FeedbackPost[]               @relation("FeedbackTarget")
-  feedbackReads       FeedbackRead[]
-  journeyState        UserJourneyState?
-  sideTaskSubmissions SideTaskSubmission[]
-  notifications       Notification[]
-  emailDeliveryLogs   EmailDeliveryLog[]
+  id                         String                       @id @default(uuid()) @db.Uuid
+  name                       String
+  email                      String                       @unique
+  passwordHash               String?
+  refreshTokenHash           String?
+  role                       UserRole                     @default(USER)
+  isRootAdmin                Boolean                      @default(false) @map("is_root_admin")
+  adminPermissions           Json?                        @map("admin_permissions")
+  emailVerified              Boolean                      @default(false)
+  emailVerifiedAt            DateTime?
+  emailVerificationCodeHash  String?                      @db.VarChar(128)
+  emailVerificationExpiresAt DateTime?
+  emailVerificationSentAt    DateTime?
+  emailVerificationAttempts  Int                          @default(0)
+  portfolioUrl               String?                      @db.VarChar(2048)
+  targetJobTitle             String?                      @db.VarChar(150)
+  preferredLocations         String[]                     @default([])
+  uxVariant                  String?                      @map("ux_variant") @db.VarChar(10)
+  createdAt                  DateTime                     @default(now())
+  updatedAt                  DateTime                     @updatedAt
+  membership                 Membership?
+  applications               Application[]
+  transitions                ApplicationStageTransition[]
+  authIdentities             AuthIdentity[]
+  cv                         UserCv?
+  cvHistory                  UserCvHistory[]
+  assignedTasks              Task[]                       @relation("TaskAssignee")
+  createdTasks               Task[]                       @relation("TaskCreator")
+  taskNotes                  TaskNote[]                   @relation("TaskNoteAuthor")
+  authoredFeedback           FeedbackPost[]               @relation("FeedbackAuthor")
+  targetedFeedback           FeedbackPost[]               @relation("FeedbackTarget")
+  feedbackReads              FeedbackRead[]
+  journeyState               UserJourneyState?
+  sideTaskSubmissions        SideTaskSubmission[]
+  notifications              Notification[]
+  emailDeliveryLogs          EmailDeliveryLog[]
+  experienceProgress         UserExperienceProgress[]
+  labAssignments             UxLabAssignment[]
+  labEvents                  UxLabEvent[]
+  adminPermissionActions     AdminPermissionAudit[]       @relation("AdminPermissionActor")
+  adminPermissionChanges     AdminPermissionAudit[]       @relation("AdminPermissionTarget")
 
   @@map("users")
+}
+
+model AdminPermissionAudit {
+  id        String   @id @default(uuid()) @db.Uuid
+  actorId   String   @map("actor_id") @db.Uuid
+  targetId  String   @map("target_id") @db.Uuid
+  previous  Json?
+  next      Json?
+  createdAt DateTime @default(now()) @map("created_at")
+  actor     User     @relation("AdminPermissionActor", fields: [actorId], references: [id], onDelete: Restrict)
+  target    User     @relation("AdminPermissionTarget", fields: [targetId], references: [id], onDelete: Restrict)
+
+  @@index([targetId, createdAt(sort: Desc)])
+  @@index([actorId, createdAt(sort: Desc)])
+  @@map("admin_permission_audits")
+}
+
+// Section design releases are independent of the legacy global A/B/C experiment.
+// Revision identifiers are immutable: changing a release never resets journey data.
+model UxLabRelease {
+  id        String   @id @default(uuid()) @db.Uuid
+  section   String   @db.VarChar(40)
+  version   String   @db.VarChar(10)
+  createdBy String   @map("created_by") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([section, createdAt(sort: Desc)])
+  @@map("ux_lab_releases")
+}
+
+model UxLabExperiment {
+  id            String            @id @default(uuid()) @db.Uuid
+  title         String            @db.VarChar(120)
+  hypothesis    String            @db.VarChar(1000)
+  section       String            @db.VarChar(40)
+  treatment     String            @default("B") @db.VarChar(10)
+  status        String            @default("DRAFT") @db.VarChar(20)
+  audience      String            @default("ALL") @db.VarChar(10)
+  groupIds      String[]          @default([]) @map("group_ids") @db.Uuid
+  userIds       String[]          @default([]) @map("user_ids") @db.Uuid
+  entrySequence Int               @default(0) @map("entry_sequence")
+  allocation    Int               @default(50)
+  primaryMetric String            @map("primary_metric") @db.VarChar(40)
+  minSample     Int               @default(30) @map("min_sample")
+  createdBy     String            @map("created_by") @db.Uuid
+  createdAt     DateTime          @default(now()) @map("created_at")
+  startedAt     DateTime?         @map("started_at")
+  endedAt       DateTime?         @map("ended_at")
+  assignments   UxLabAssignment[]
+
+  @@index([section, status])
+  @@map("ux_lab_experiments")
+}
+
+model UxLabAssignment {
+  id           String          @id @default(uuid()) @db.Uuid
+  experimentId String          @map("experiment_id") @db.Uuid
+  userId       String          @map("user_id") @db.Uuid
+  version      String          @db.VarChar(10)
+  createdAt    DateTime        @default(now()) @map("created_at")
+  experiment   UxLabExperiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([experimentId, userId])
+  @@map("ux_lab_assignments")
+}
+
+model UxLabEvent {
+  id        String   @id @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  sessionId String   @map("session_id") @db.Uuid
+  groupId   String?  @map("group_id") @db.Uuid
+  section   String   @db.VarChar(40)
+  version   String   @db.VarChar(10)
+  context   String   @db.VarChar(100)
+  name      String   @db.VarChar(40)
+  duration  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt, section])
+  @@index([context, userId, sessionId, name])
+  @@map("ux_lab_events")
+}
+
+// Anonymous, privacy-preserving acquisition analytics. Visitor/session IDs are
+// browser-generated UUIDs; no IP address, email, or free-form user data is stored.
+model MarketingEvent {
+  id           String   @id @default(uuid()) @db.Uuid
+  visitorId    String   @map("visitor_id") @db.Uuid
+  sessionId    String   @map("session_id") @db.Uuid
+  type         String   @db.VarChar(32)
+  path         String   @db.VarChar(300)
+  utmSource    String?  @map("utm_source") @db.VarChar(120)
+  utmMedium    String?  @map("utm_medium") @db.VarChar(120)
+  utmCampaign  String?  @map("utm_campaign") @db.VarChar(160)
+  utmContent   String?  @map("utm_content") @db.VarChar(160)
+  referrerHost String?  @map("referrer_host") @db.VarChar(180)
+  deviceType   String   @map("device_type") @db.VarChar(16)
+  country      String?  @db.VarChar(2)
+  conversionKey String? @unique @map("conversion_key") @db.VarChar(64)
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([visitorId, createdAt])
+  @@index([sessionId, createdAt])
+  @@index([type, createdAt])
+  @@index([utmCampaign, createdAt])
+  @@map("marketing_events")
+}
+
+enum ExperienceProgressStatus {
+  IN_PROGRESS
+  COMPLETED
+  SKIPPED
+}
+
+model UserExperienceProgress {
+  id          String                   @id @default(uuid()) @db.Uuid
+  userId      String                   @map("user_id") @db.Uuid
+  flowKey     String                   @map("flow_key") @db.VarChar(100)
+  status      ExperienceProgressStatus @default(IN_PROGRESS)
+  currentStep Int                      @default(0) @map("current_step")
+  startedAt   DateTime                 @default(now()) @map("started_at")
+  finishedAt  DateTime?                @map("finished_at")
+  updatedAt   DateTime                 @updatedAt @map("updated_at")
+  user        User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, flowKey])
+  @@index([flowKey, status])
+  @@map("user_experience_progress")
 }
 
 model UserCv {
@@ -399,46 +537,48 @@ model ApplicationStageTransition {
 }
 
 model JourneyNode {
-  id                     String          @id @default(uuid()) @db.Uuid
-  code                   String          @unique @db.VarChar(50) // مثل: TASK_0, W1_M1..W1_M5, W1_REVIEW, W2_M1...
-  weekNumber             Int             // 0 للمهمة صفر، و 1..4 للأسابيع الأربعة
-  orderIndex             Int             // الترتيب المتسلسل العام (0, 1, 2, 3...)
-  nodeType               JourneyNodeType @default(MAIN_QUEST)
-  titleAr                String          @db.VarChar(200)
-  titleEn                String          @db.VarChar(200)
-  descriptionAr          String?         @db.Text
-  descriptionEn          String?         @db.Text
-  durationDays           Int             @default(1) // 1 للمهام 1-4، و 2 للمهمة الخامسة، و 1 لليوم السابع
-  requiredAppsCount      Int             @default(0) // عدد الطلبات العامة المطلوبة في هذه العقدة
-  requiredTailoredCount  Int             @default(0) // عدد الطلبات الخاصة (طلب خاص) المطلوبة
-  requiredPostsCount     Int             @default(0) // عدد المنشورات (منشور) المطلوبة
-  requiredOutreachCount  Int             @default(0) // عدد التواصل (تواصل) المطلوب
-  unlocksInsightCode     String?         @db.VarChar(100) // كود الملاحظة التي تفتح عند إتمام هذه العقدة
-  nextNodeCode           String?         @db.VarChar(50)  // كود العقدة التالية التي ينقشع عنها الضباب
-  createdAt              DateTime        @default(now())
-  updatedAt              DateTime        @updatedAt
+  id                    String          @id @default(uuid()) @db.Uuid
+  code                  String          @unique @db.VarChar(50) // مثل: TASK_0, W1_M1..W1_M5, W1_REVIEW, W2_M1...
+  weekNumber            Int // 0 للمهمة صفر، و 1..4 للأسابيع الأربعة
+  orderIndex            Int // الترتيب المتسلسل العام (0, 1, 2, 3...)
+  nodeType              JourneyNodeType @default(MAIN_QUEST)
+  titleAr               String          @db.VarChar(200)
+  titleEn               String          @db.VarChar(200)
+  descriptionAr         String?         @db.Text
+  descriptionEn         String?         @db.Text
+  durationDays          Int             @default(1) // 1 للمهام 1-4، و 2 للمهمة الخامسة، و 1 لليوم السابع
+  requiredAppsCount     Int             @default(0) // عدد الطلبات العامة المطلوبة في هذه العقدة
+  requiredTailoredCount Int             @default(0) // عدد الطلبات الخاصة (طلب خاص) المطلوبة
+  requiredPostsCount    Int             @default(0) // عدد المنشورات (منشور) المطلوبة
+  requiredOutreachCount Int             @default(0) // عدد التواصل (تواصل) المطلوب
+  unlocksInsightCode    String?         @db.VarChar(100) // كود الملاحظة التي تفتح عند إتمام هذه العقدة
+  nextNodeCode          String?         @db.VarChar(50) // كود العقدة التالية التي ينقشع عنها الضباب
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
 
   @@index([weekNumber, orderIndex])
   @@map("journey_nodes")
 }
 
 model UserJourneyState {
-  id                   String   @id @default(uuid()) @db.Uuid
-  userId               String   @unique @db.Uuid
-  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  currentWeek          Int      @default(0) // يبدأ من 0 (المهمة صفر) ثم 1، 2، 3، 4
-  currentNodeCode      String   @default("TASK_0") @db.VarChar(50)
-  currentNodeStartedAt DateTime @default(now())
-  weekStartedAt        DateTime @default(now())
-  completedNodeCodes   String[] @default([])
-  unlockedInsightCodes String[] @default([])
-  readInsightCodes     String[] @default([])
-  isGroupUnlocked      Boolean  @default(false) // يفتح بعد إتمام TASK_0 (5 طلبات)
-  canUseTableView      Boolean  @default(false) // يفتح بعد إتمام W1_M1 (10 طلبات في الأسبوع 1)
-  hasUnlockedAdvPrep   Boolean  @default(false) // يفتح عند أول INTERVIEW أو hasAssignment
-  cvVersionNumber      Int       @default(1)
-  week1StartedAt       DateTime?
-  updatedAt            DateTime  @updatedAt
+  id                          String    @id @default(uuid()) @db.Uuid
+  userId                      String    @unique @db.Uuid
+  user                        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currentWeek                 Int       @default(0) // يبدأ من 0 (المهمة صفر) ثم 1، 2، 3، 4
+  currentNodeCode             String    @default("TASK_0") @db.VarChar(50)
+  currentNodeStartedAt        DateTime  @default(now())
+  weekStartedAt               DateTime  @default(now())
+  completedNodeCodes          String[]  @default([])
+  unlockedInsightCodes        String[]  @default([])
+  readInsightCodes            String[]  @default([])
+  isGroupUnlocked             Boolean   @default(false) // يفتح بعد إتمام TASK_0 (5 طلبات)
+  canUseTableView             Boolean   @default(false) // يفتح بعد إتمام W1_M1 (10 طلبات في الأسبوع 1)
+  hasUnlockedAdvPrep          Boolean   @default(false) // يفتح عند أول INTERVIEW أو hasAssignment
+  cvVersionNumber             Int       @default(1)
+  cvFoundationBaselineVersion Int?
+  cvFoundationCompletedAt     DateTime?
+  week1StartedAt              DateTime?
+  updatedAt                   DateTime  @updatedAt
 
   @@map("user_journey_states")
 }
@@ -468,8 +608,8 @@ model SideTaskSubmission {
   sharedInGroup Boolean         @default(true)
   createdAt     DateTime        @default(now())
 
-  @@index([userId, nodeCode, type])
   @@unique([userId, requestKey])
+  @@index([userId, nodeCode, type])
   @@index([userId, journeyWeek])
   @@map("side_task_submissions")
 }
@@ -556,4 +696,67 @@ model NotificationConfig {
   updatedAt             DateTime @updatedAt
 
   @@map("notification_configs")
+}
+
+model UxJourneyObservation {
+  id            String   @id @default(uuid()) @db.Uuid
+  nodeCode      String   @map("node_code") @db.VarChar(50)
+  groupId       String?  @map("group_id") @db.Uuid
+  subjectUserId String?  @map("subject_user_id") @db.Uuid
+  title         String   @db.VarChar(140)
+  hypothesis    String   @db.VarChar(1500)
+  nextAction    String   @map("next_action") @db.VarChar(700)
+  category      String   @db.VarChar(20)
+  status        String   @default("OPEN") @db.VarChar(20)
+  ownerId       String?  @map("owner_id") @db.Uuid
+  authorId      String   @map("author_id") @db.Uuid
+  evidence      Json
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@index([nodeCode, createdAt(sort: Desc)])
+  @@index([groupId, status])
+  @@map("ux_journey_observations")
+}
+
+// Durable private-file cleanup; contains no account identity or CV contents.
+model CvDeletionJob {
+  id            String    @id @default(uuid()) @db.Uuid
+  storageKey    String    @unique @map("storage_key") @db.VarChar(64)
+  attempts      Int       @default(0)
+  createdAt     DateTime  @default(now()) @map("created_at")
+  lastAttemptAt DateTime? @map("last_attempt_at")
+
+  @@map("cv_deletion_jobs")
+}
+
+model OperationsSettings {
+  id        String   @id @default("main")
+  revision  Int      @default(0)
+  value     Json
+  updatedBy String?  @map("updated_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("operations_settings")
+}
+
+model OperationsSample {
+  id         String   @id @default(uuid()) @db.Uuid
+  capturedAt DateTime @default(now()) @map("captured_at")
+  value      Json
+
+  @@index([capturedAt])
+  @@map("operations_samples")
+}
+
+model OperationsSettingsAudit {
+  id        String   @id @default(uuid()) @db.Uuid
+  actorId   String   @map("actor_id") @db.Uuid
+  revision  Int
+  previous  Json
+  next      Json
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@map("operations_settings_audit")
 }

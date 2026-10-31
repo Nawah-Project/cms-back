@@ -1,3 +1,7 @@
+import { OperationsController } from '../operations/operations.controller';
+import { AccountDeletionService } from './account-deletion.service';
+import { AccountCvCleanupService } from './account-cv-cleanup.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { GroupsModule } from '../members/groups.module';
@@ -11,6 +15,8 @@ import { UxAnalyticsService } from './ux-analytics.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AdminNotificationsController } from './notifications/admin-notifications.controller';
 import { AdminNotificationsService } from './notifications/admin-notifications.service';
+import { AdminAccessController } from './admin-access.controller';
+import { AdminAccessService } from './admin-access.service';
 
 @Module({
   imports: [
@@ -22,14 +28,24 @@ import { AdminNotificationsService } from './notifications/admin-notifications.s
   ],
   controllers: [
     AdminController,
+    OperationsController,
     UxAnalyticsController,
     AdminNotificationsController,
+    AdminAccessController,
   ],
   providers: [
     AdminGuard,
+    AccountDeletionService,
+    {
+      provide: AccountCvCleanupService,
+      useFactory: (prisma: PrismaService) =>
+        new AccountCvCleanupService(prisma),
+      inject: [PrismaService],
+    },
     AdminService,
     UxAnalyticsService,
     AdminNotificationsService,
+    AdminAccessService,
   ],
   exports: [UxAnalyticsService, AdminNotificationsService, AdminService],
 })

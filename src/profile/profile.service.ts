@@ -33,6 +33,8 @@ import {
   validateCvFileContent,
   type UploadedCvFile,
 } from './cv-file.util';
+import { OperationsPolicyService } from '../operations/operations-policy.service';
+import { GroupAssignmentService } from '../members/group-assignment.service';
 import { toSafeCvMetadata } from './profile.types';
 
 const CV_MIME_TYPE = 'application/pdf';
@@ -49,6 +51,8 @@ export class ProfileService
   constructor(
     private readonly prisma: PrismaService,
     private readonly storageDir: string,
+    private readonly groupAssignment?: GroupAssignmentService,
+    private readonly operationsPolicy?: OperationsPolicyService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -64,7 +68,10 @@ export class ProfileService
     if (this.cleanupTimer) clearInterval(this.cleanupTimer);
   }
 
-  async cleanupOrphanedFiles(): Promise<{ deletedCount: number; freedBytes: number }> {
+  async cleanupOrphanedFiles(): Promise<{
+    deletedCount: number;
+    freedBytes: number;
+  }> {
     let files: Dirent[];
     try {
       files = await readdir(this.storageDir, { withFileTypes: true });
@@ -197,53 +204,142 @@ export class ProfileService
       if (preferredLocations !== undefined) {
         data.preferredLocations = preferredLocations;
       }
-      await this.prisma.user.update({
-        where: { id: userId },
-        data,
-        select: { id: true },
-      });
+      const save = async (db: Prisma.TransactionClient) => {
+        if (targetJobTitle !== undefined && this.groupAssignment) {
+          const membership = await db.membership.findUnique({
+            where: { userId },
+            select: { groupId: true },
+          });
+          if (membership)
+            await this.groupAssignment.assertCompatible(
+              db,
+              userId,
+              membership.groupId,
+              targetJobTitle,
+            );
+        }
+        await db.user.update({
+          where: { id: userId },
+          data,
+          select: { id: true },
+        });
+      };
+      if (this.groupAssignment)
+        await this.groupAssignment.withAssignmentLock(save);
+      else await save(this.prisma);
     }
     return this.getProfile(userId);
   }
 
   async uploadCv(userId: string, file: UploadedCvFile | undefined) {
     if (!file) throw new BadRequestException('A CV file is required');
-    if (file.size > CV_MAX_FILE_SIZE_BYTES) throw new PayloadTooLargeException('The CV exceeds the configured size limit');
+    if (file.size > CV_MAX_FILE_SIZE_BYTES)
+      throw new PayloadTooLargeException(
+        'The CV exceeds the configured size limit',
+      );
+    validateCvFileContent(file);
+    if (this.operationsPolicy)
+      return this.operationsPolicy.withCvBudget(userId, file.buffer, (db) =>
+        this.uploadCvFile(userId, file, db),
+      );
+    return this.uploadCvFile(userId, file);
+  }
+
+  private async uploadCvFile(
+    userId: string,
+    file: UploadedCvFile,
+    budgetDb?: Prisma.TransactionClient,
+  ) {
+    if (!file) throw new BadRequestException('A CV file is required');
+    if (file.size > CV_MAX_FILE_SIZE_BYTES)
+      throw new PayloadTooLargeException(
+        'The CV exceeds the configured size limit',
+      );
     validateCvFileContent(file);
     const contentHash = createHash('sha256').update(file.buffer).digest('hex');
-    const legacy = await this.prisma.userCv.findUnique({ where: { userId } });
+    const legacy = await (budgetDb ?? this.prisma).userCv.findUnique({
+      where: { userId },
+    });
     let legacyMatches = false;
-    if (legacy && !legacy.contentHash && STORAGE_KEY_PATTERN.test(legacy.storageKey)) {
+    if (
+      legacy &&
+      !legacy.contentHash &&
+      STORAGE_KEY_PATTERN.test(legacy.storageKey)
+    ) {
       try {
-        legacyMatches = createHash('sha256').update(await readFile(join(this.storageDir, legacy.storageKey))).digest('hex') === contentHash;
-      } catch { /* A missing legacy file requires a real replacement. */ }
+        legacyMatches =
+          createHash('sha256')
+            .update(await readFile(join(this.storageDir, legacy.storageKey)))
+            .digest('hex') === contentHash;
+      } catch {
+        /* A missing legacy file requires a real replacement. */
+      }
     }
     const storageKey = `${randomUUID()}.pdf`;
     await mkdir(this.storageDir, { recursive: true, mode: 0o700 });
-    await writeFile(join(this.storageDir, storageKey), file.buffer, { flag: 'wx', mode: 0o600 });
+    await writeFile(join(this.storageDir, storageKey), file.buffer, {
+      flag: 'wx',
+      mode: 0o600,
+    });
     try {
       for (let attempt = 0; ; attempt++) {
         try {
-          const result = await this.prisma.$transaction(async (tx) => {
-            const previous = await tx.userCv.findUnique({ where: { userId } });
-            if (previous && (previous.contentHash === contentHash || (legacyMatches && previous.storageKey === legacy?.storageKey))) {
+          const save = async (tx: Prisma.TransactionClient) => {
+            const previous = await tx.userCv.findUnique({
+              where: { userId },
+            });
+            if (
+              previous &&
+              (previous.contentHash === contentHash ||
+                (legacyMatches && previous.storageKey === legacy?.storageKey))
+            ) {
               return { cv: previous, reused: true };
             }
             const [state, latest] = await Promise.all([
               tx.userJourneyState.findUnique({ where: { userId } }),
-              tx.userCvHistory.findFirst({ where: { userId }, orderBy: { versionNumber: 'desc' } }),
+              tx.userCvHistory.findFirst({
+                where: { userId },
+                orderBy: { versionNumber: 'desc' },
+              }),
             ]);
-            const versionNumber = previous || latest ? Math.max(state?.cvVersionNumber ?? 0, latest?.versionNumber ?? 0) + 1 : 1;
-            const data = { originalName: sanitizeCvOriginalName(file.originalname), mimeType: CV_MIME_TYPE, size: file.buffer.length, storageKey };
-            await tx.userCvHistory.create({ data: { userId, versionNumber, ...data } });
-            if (state) await tx.userJourneyState.update({ where: { userId }, data: { cvVersionNumber: versionNumber } });
-            const cv = await tx.userCv.upsert({ where: { userId }, create: { userId, ...data, contentHash }, update: { ...data, contentHash, uploadedAt: new Date() } });
+            const versionNumber =
+              previous || latest
+                ? Math.max(
+                    state?.cvVersionNumber ?? 0,
+                    latest?.versionNumber ?? 0,
+                  ) + 1
+                : 1;
+            const data = {
+              originalName: sanitizeCvOriginalName(file.originalname),
+              mimeType: CV_MIME_TYPE,
+              size: file.buffer.length,
+              storageKey,
+            };
+            await tx.userCvHistory.create({
+              data: { userId, versionNumber, ...data },
+            });
+            if (state)
+              await tx.userJourneyState.update({
+                where: { userId },
+                data: { cvVersionNumber: versionNumber },
+              });
+            const cv = await tx.userCv.upsert({
+              where: { userId },
+              create: { userId, ...data, contentHash },
+              update: { ...data, contentHash, uploadedAt: new Date() },
+            });
             return { cv, reused: false };
-          }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+          };
+          const result = budgetDb
+            ? await save(budgetDb)
+            : await this.prisma.$transaction(save, {
+                isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+              });
           if (result.reused) await this.deleteStoredCv(storageKey);
           return toSafeCvMetadata(result.cv);
         } catch (error) {
-          if ((error as { code?: string }).code !== 'P2034' || attempt >= 4) throw error;
+          if ((error as { code?: string }).code !== 'P2034' || attempt >= 4)
+            throw error;
         }
       }
     } catch (error) {

@@ -21,9 +21,11 @@ import {
   SendCustomNotificationDto,
   UpdateNotificationConfigDto,
 } from './dto/admin-notifications.dto';
+import { AdminAccess } from '../admin-access';
 
 @Controller('admin/notifications')
 @UseGuards(JwtAuthGuard, AdminGuard)
+@AdminAccess('OPERATIONS')
 export class AdminNotificationsController {
   constructor(private readonly service: AdminNotificationsService) {}
 
@@ -38,9 +40,7 @@ export class AdminNotificationsController {
   }
 
   @Post('preview-recipients')
-  previewRecipients(
-    @Body() dto: PreviewRecipientsDto,
-  ): Promise<{
+  previewRecipients(@Body() dto: PreviewRecipientsDto): Promise<{
     count: number;
     recipients: TargetMember[];
     members: TargetMember[];

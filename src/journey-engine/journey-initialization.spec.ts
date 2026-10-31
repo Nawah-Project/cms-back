@@ -7,6 +7,19 @@ import {
 } from './journey-v4.seed';
 
 describe('Phase 1 journey initialization', () => {
+  it('starts a legacy account at Task 0 while retaining its latest historical CV version', async () => {
+    const prisma = {
+      userJourneyState: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn(async ({data}) => data) },
+      membership: { findUnique: jest.fn().mockResolvedValue(null) },
+      application: { count: jest.fn().mockResolvedValue(12) },
+      userCvHistory: { findFirst: jest.fn().mockResolvedValue({ versionNumber: 4 }) },
+    };
+    const state = await new JourneyEngineService(prisma as unknown as PrismaService).getOrCreateUserState('legacy');
+    expect(state.currentNodeCode).toBe('TASK_0');
+    expect(state.completedNodeCodes).toEqual([]);
+    expect(state.cvVersionNumber).toBe(4);
+    expect(prisma.application.count).toHaveBeenCalledWith({where:{userId:'legacy'}});
+  });
   function fixture() {
     const nodes = new Map<string, JourneyNodeSeedItem>();
     const submissions = [

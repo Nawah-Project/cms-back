@@ -29,6 +29,7 @@ import {
   sanitizeFeedbackContent,
   sanitizeFeedbackHtml,
 } from './content-sanitizer';
+import { cvFoundationStatus, CV_FOUNDATION_CODE } from '../journey-engine/cv-foundation.util';
 import { JOURNEY_GUIDANCE_CATALOG } from './journey-guidance.catalog';
 
 const feedbackInclude = {
@@ -77,7 +78,7 @@ export class FeedbackService implements OnApplicationBootstrap {
             data: {
               authorId: admin.id,
               title: item.titleAr,
-              content: `<p>${item.summaryAr}</p>`,
+              content: item.contentAr ?? `<p>${item.summaryAr}</p>`,
               visibility: FeedbackVisibility.ALL,
               context: FeedbackContext.GENERAL,
               tags: [FeedbackTag.GENERAL, FeedbackTag.LEARNING],
@@ -440,6 +441,10 @@ export class FeedbackService implements OnApplicationBootstrap {
 
   async markRead(userId: string, id: string) {
     const post = await this.findAuthorized(userId, id);
+    if (post.unlockTriggerCode === CV_FOUNDATION_CODE) {
+      const [state, latest] = await Promise.all([this.prisma.userJourneyState.findUnique({where:{userId}}),this.prisma.userCvHistory.findFirst({where:{userId},orderBy:{versionNumber:'desc'},select:{versionNumber:true,uploadedAt:true}})]);
+      if (!state || !cvFoundationStatus(state, latest ? [latest] : []).canComplete) throw new BadRequestException('Upload your revised CV before confirming this guidance');
+    }
     const read = await this.prisma.feedbackRead.upsert({
       where: { feedbackId_userId: { feedbackId: id, userId } },
       create: { feedbackId: id, userId },

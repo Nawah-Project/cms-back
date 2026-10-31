@@ -27,6 +27,9 @@ import {
   reportMetrics,
 } from './reporting.util';
 import { createHash } from 'node:crypto';
+import { cvFoundationStatus, CV_FOUNDATION_CODE } from './cv-foundation.util';
+import { guidanceProgress, RESEARCH_TEST_USER_ID } from './guidance-progress.util';
+import { persistProfessionalChange } from './professional-change.util';
 import { isWeeklyReflection, professionalTasksUnlocked } from './journey-rules';
 import { GroupAssignmentService } from '../members/group-assignment.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -76,7 +79,8 @@ export interface JourneyStateResponse {
   currentWeekNodes: EnrichedJourneyNode[];
   nodes: EnrichedJourneyNode[];
   weeklyStats: WeeklyConversionStats;
-  features: { groups: boolean; tableView: boolean; professionalTasks: boolean };
+  features: { groups: boolean; tableView: boolean; professionalTasks: boolean; analytics: boolean };
+  cvFoundation: ReturnType<typeof cvFoundationStatus>;
 }
 
 export interface JobMarketCompassPlatform {
@@ -262,7 +266,7 @@ export class JourneyEngineService implements OnModuleInit {
       return existing;
     }
 
-    const [membership, existingAppsCount] = await Promise.all([
+    const [membership, existingAppsCount, latestCv] = await Promise.all([
       this.prisma?.membership?.findUnique
         ? this.prisma.membership.findUnique({
             where: { userId },
@@ -272,6 +276,9 @@ export class JourneyEngineService implements OnModuleInit {
       this.prisma?.application?.count
         ? this.prisma.application.count({ where: { userId } })
         : Promise.resolve(0),
+      this.prisma?.userCvHistory?.findFirst
+        ? this.prisma.userCvHistory.findFirst({ where: { userId }, orderBy: { versionNumber: 'desc' }, select: { versionNumber: true } })
+        : Promise.resolve(null),
     ]);
 
     const isGroupUnlocked = Boolean(membership);
@@ -289,7 +296,7 @@ export class JourneyEngineService implements OnModuleInit {
         isGroupUnlocked,
         canUseTableView,
         hasUnlockedAdvPrep: false,
-        cvVersionNumber: 1,
+        cvVersionNumber: Math.max(1, latestCv?.versionNumber ?? 1),
       },
     });
   }
@@ -316,7 +323,18 @@ export class JourneyEngineService implements OnModuleInit {
     outreachCount: number;
     weeklyReviewCount: number;
   }> {
-    const dateFilter = { createdAt: { gte: state.currentNodeStartedAt } };
+    let baseline = state.currentNodeStartedAt;
+    if (node.code === 'TASK_0' && this.prisma?.userExperienceProgress?.findUnique) {
+      const guide = await this.prisma.userExperienceProgress.findUnique({
+        where: { userId_flowKey: { userId, flowKey: 'first-application-v1' } },
+      });
+      // A GET must not complete Task 0 from pre-program legacy records while
+      // account guide history is still being loaded/imported. Reading and
+      // evaluating share this guard, including the first-write race window.
+      if (!guide) return { appsCount: 0, tailoredCount: 0, postsCount: 0, outreachCount: 0, weeklyReviewCount: 0 };
+      if (guide.status === 'IN_PROGRESS' && guide.startedAt > baseline) baseline = guide.startedAt;
+    }
+    const dateFilter = { createdAt: { gte: baseline } };
 
     const [
       appsCount,
@@ -462,6 +480,7 @@ export class JourneyEngineService implements OnModuleInit {
       return state;
     }
 
+    if (currentNode.weekNumber === 1 && currentNode.nodeType === JourneyNodeType.MAIN_QUEST && !(await this.getCvFoundation(userId, state)).completed) return state;
     const counts = await this.getCurrentNodeCounts(userId, state, currentNode);
 
     const appsSatisfied = counts.appsCount >= currentNode.requiredAppsCount;
@@ -521,7 +540,7 @@ export class JourneyEngineService implements OnModuleInit {
         ? `Guidance unlocked: ${guidance.titleEn} after completing ${currentNode.titleEn}.`
         : `New guidance unlocked after completing ${currentNode.titleEn}.`;
 
-      await this.createNotificationSafe({
+      if (currentNode.code !== 'TASK_0') await this.createNotificationSafe({
         userId,
         type: 'INSIGHT_UNLOCKED',
         titleAr,
@@ -549,17 +568,7 @@ export class JourneyEngineService implements OnModuleInit {
           'Congratulations on completing Task 0! You have been assigned to a cohort group and can now view Members Progress.',
         actionUrl: '/members-progress',
       });
-      await this.createNotificationSafe({
-        userId,
-        type: 'PROFESSIONAL_DEVELOPMENT_UNLOCKED',
-        titleAr: 'إرشاداتك المهنية الأولى متاحة!',
-        titleEn: 'Professional Development Unlocked!',
-        bodyAr:
-          'أكملت المهمة صفر! إرشادات السيرة الذاتية متاحة؛ المهام المهنية بتتفتح بعد إرشاد تنظيم الوقت في الأسبوع الثالث.',
-        bodyEn:
-          'Task 0 completed! Initial CV guidance is available. Professional tasks unlock after reading Week 3 time-management guidance.',
-        actionUrl: '/professional-development',
-      });
+
     }
 
     if (currentNode.code === 'W1_M1') {
@@ -569,14 +578,14 @@ export class JourneyEngineService implements OnModuleInit {
     if (
       account?.role !== 'ADMIN' &&
       nextNode &&
-      nextNode.weekNumber === currentNode.weekNumber
+      (nextNode.weekNumber === currentNode.weekNumber || (currentNode.weekNumber >= 1 && nextNode.weekNumber > currentNode.weekNumber))
     ) {
       const weekNodes = (await this.getAllNodes())
         .filter((node) => node.weekNumber === nextNode.weekNumber)
         .sort((a, b) => a.orderIndex - b.orderIndex);
-      const elapsedDaysBeforeNextNode = weekNodes
-        .filter((node) => node.orderIndex < nextNode.orderIndex)
-        .reduce((days, node) => days + node.durationDays, 0);
+      const elapsedDaysBeforeNextNode = nextNode.weekNumber > currentNode.weekNumber
+        ? 7 * (nextNode.weekNumber - currentNode.weekNumber)
+        : weekNodes.filter((node) => node.orderIndex < nextNode.orderIndex).reduce((days, node) => days + node.durationDays, 0);
       const nextNodeAvailableAt = new Date(
         state.weekStartedAt.getTime() +
           elapsedDaysBeforeNextNode * 86_400_000,
@@ -617,10 +626,11 @@ export class JourneyEngineService implements OnModuleInit {
         currentNodeStartedAt: now,
         weekStartedAt,
         week1StartedAt,
+        ...(currentNode.code === 'TASK_0' && state.cvFoundationBaselineVersion == null ? { cvFoundationBaselineVersion: state.cvVersionNumber ?? 1 } : {}),
       },
     });
 
-    if (nextNode) {
+    if (nextNode && currentNode.code !== 'TASK_0') {
       await this.createNotificationSafe({
         userId,
         type: 'QUEST_UNLOCKED',
@@ -678,8 +688,8 @@ export class JourneyEngineService implements OnModuleInit {
     }
 
     if (!hasReadBasic) {
-      // Exceptionally unlock INSIGHT_W1_INTERVIEW_BASIC early
       const state = await this.getOrCreateUserState(userId);
+      if (!(state.completedNodeCodes ?? []).includes('W1_M2')) return;
       const currentUnlocked = state.unlockedInsightCodes ?? [];
       if (!currentUnlocked.includes('INSIGHT_W1_INTERVIEW_BASIC')) {
         const nextUnlocked = Array.from(
@@ -831,8 +841,7 @@ export class JourneyEngineService implements OnModuleInit {
     }
     let submission: SideTaskSubmission;
     try {
-    submission = await this.prisma.sideTaskSubmission.create({
-      data: {
+    const submissionData: Prisma.SideTaskSubmissionUncheckedCreateInput = {
         userId,
         requestKey,
         nodeCode,
@@ -854,8 +863,10 @@ export class JourneyEngineService implements OnModuleInit {
         // Version metadata belongs exclusively to actual CV uploads.
         newCvUploaded: false,
         sharedInGroup: dto.sharedInGroup ?? true,
-      },
-    });
+    };
+    submission = dto.type === SideTaskType.USER_CHANGE
+      ? await persistProfessionalChange(this.prisma, submissionData)
+      : await this.prisma.sideTaskSubmission.create({ data: submissionData });
     } catch (error) {
       if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') throw error;
       const replay = await this.prisma.sideTaskSubmission.findFirst({ where: { userId, requestKey } });
@@ -876,6 +887,13 @@ export class JourneyEngineService implements OnModuleInit {
     return { submission, journeyState };
   }
 
+  private async getCvFoundation(userId: string, state: UserJourneyState) {
+    const known = cvFoundationStatus(state);
+    if (!known.unlocked || known.completed) return known;
+    const latest = await this.prisma.userCvHistory.findFirst({ where: { userId }, orderBy: { versionNumber: 'desc' }, select: { versionNumber: true, uploadedAt: true } });
+    return cvFoundationStatus(state, latest ? [latest] : []);
+  }
+
   async markInsightRead(userId: string, code: string): Promise<UserJourneyState> {
     const state = await this.getOrCreateUserState(userId);
     if (!(state.unlockedInsightCodes ?? []).includes(code)) throw new ForbiddenException('Complete the required quest to unlock this guidance');
@@ -885,16 +903,21 @@ export class JourneyEngineService implements OnModuleInit {
         { visibility: 'GROUP', group: { memberships: { some: { userId } } } }],
     }, orderBy: [{ publishedAt: 'desc' }, { id: 'desc' }] });
     if (!post && !JOURNEY_GUIDANCE_CATALOG.some((item) => item.code === code)) throw new ForbiddenException('Guidance is unavailable for this participant');
+    if (code === CV_FOUNDATION_CODE) {
+      const foundation = await this.getCvFoundation(userId, state);
+      if (!foundation.canComplete) throw new BadRequestException({ code: 'CV_UPDATE_REQUIRED', message: 'Upload your updated CV after completing Task 0 before confirming this guidance' });
+    }
     // Atomic append is conditional, so concurrent retries cannot duplicate read codes.
     await this.prisma.userJourneyState.updateMany({
       where: { userId, NOT: { readInsightCodes: { has: code } } },
-      data: { readInsightCodes: { push: code } },
+      data: { readInsightCodes: { push: code }, ...(code === CV_FOUNDATION_CODE ? { cvFoundationCompletedAt: new Date() } : {}) },
     });
     if (post) await this.prisma.feedbackRead.upsert({
       where: { feedbackId_userId: { feedbackId: post.id, userId } },
       create: { feedbackId: post.id, userId }, update: {},
     });
     await this.evaluateInterviewGuidanceUnlocks(userId);
+    if (code === CV_FOUNDATION_CODE) await this.evaluateProgress(userId);
     return this.getOrCreateUserState(userId);
   }
 
@@ -1024,9 +1047,12 @@ export class JourneyEngineService implements OnModuleInit {
     const totalApplications = metrics.logged, tailoredApplications = metrics.tailored;
     const interviewsOrResponses = metrics.positive, conversionRate = metrics.positiveRate ?? 0;
 
+    const foundation = await this.getCvFoundation(userId, state);
     return {
       state,
+      cvFoundation: foundation,
       features: {
+        analytics: foundation.completed,
         groups: (state.completedNodeCodes ?? []).includes('TASK_0') || state.currentWeek >= 1,
         tableView: state.canUseTableView,
         professionalTasks: professionalTasksUnlocked(state.currentWeek, state.readInsightCodes ?? []),
@@ -1137,11 +1163,16 @@ export class JourneyEngineService implements OnModuleInit {
         weekStartedAt: null,
       };
 
+      if (!adminPreview && !cvFoundationStatus(state, cvs).completed) {
+        const account = await tx.user.findUnique({ where: { id: userId }, select: { role: true } });
+        if (account?.role !== 'ADMIN') throw new ForbiddenException({ code: 'CV_FOUNDATION_REQUIRED', guidanceUnlocked: (state.completedNodeCodes as string[]).includes('TASK_0') || state.currentWeek >= 1, message: 'Complete the CV guidance with an updated CV to unlock performance analytics' });
+      }
       return buildReportsPayload({
         applications,
         activities,
         cvs,
         tasks,
+        includeLockedWeeks: adminPreview,
         journeyNodes: journeyNodes.length ? journeyNodes : [...JOURNEY_V4_NODES],
         state,
       });
@@ -1357,30 +1388,38 @@ export class JourneyEngineService implements OnModuleInit {
       }
     }
 
-    const userStates = await this.prisma.userJourneyState.findMany({
-      select: {
-        userId: true,
-        currentWeek: true,
-        currentNodeCode: true,
-        completedNodeCodes: true,
-        unlockedInsightCodes: true,
-      },
-    });
-
-    const totalMembers = userStates.length || 1;
+    const [users, configuredNodes] = await Promise.all([
+      this.prisma.user.findMany({
+        where: { role: 'USER', id: { not: RESEARCH_TEST_USER_ID } },
+        select: {
+          id: true, name: true, journeyState: true, portfolioUrl: true, targetJobTitle: true, cv: { select: { id: true } },
+          membership: { select: { group: { select: { name: true } } } },
+          cvHistory: { select: { versionNumber: true, uploadedAt: true }, orderBy: { versionNumber: 'desc' }, take: 2 },
+        },
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.journeyNode.findMany(),
+    ]);
+    const nodes = configuredNodes.length ? configuredNodes : JOURNEY_V4_NODES;
+    const totalMembers = users.length;
+    const audience = (code: string, advanced = false) => users.map(user => {
+      const recorded = dbPosts.filter(post => post.unlockTriggerCode === code && post.reads.some(read => read.userId === user.id)).map(post => post.unlockTriggerCode!);
+      return {
+        id: user.id, name: user.name, groupName: user.membership?.group.name ?? null,
+        currentNodeCode: user.journeyState?.currentNodeCode ?? null,
+        ...guidanceProgress(code, user.journeyState, user.cvHistory, recorded, advanced, nodes.find(n => n.code === user.journeyState?.currentNodeCode), !!(user.cv && user.portfolioUrl && user.targetJobTitle)),
+      };
+    }).filter(user => user.available);
 
     const items = JOURNEY_GUIDANCE_CATALOG.map((seed) => {
       const dbPost = dbPostsByCode.get(seed.code);
 
-      const unlockedUsers = userStates.filter((u) => {
-        if (u.unlockedInsightCodes.includes(seed.code)) return true;
-        if (seed.code === 'INSIGHT_TASK_0_CV_BASE') return true;
-        if (seed.weekNumber <= u.currentWeek) return true;
-        return false;
-      });
-
-      const unlockedCount = unlockedUsers.length;
-      const readsCount = dbPost?.reads?.length ?? 0;
+      const members = audience(seed.code, seed.isAdvanced);
+      const unlockedCount = members.length;
+      const readsCount = members.filter(member => member.read).length;
+      const completedCount = members.filter(member => member.completed).length;
+      const pendingCount = members.filter(member => member.pending).length;
+      const blockingCount = members.filter(member => member.blocking).length;
 
       return {
         id: dbPost?.id ?? `catalog-${seed.code}`,
@@ -1389,18 +1428,20 @@ export class JourneyEngineService implements OnModuleInit {
         weekNumber: seed.weekNumber,
         isAdvanced: seed.isAdvanced ?? false,
         title: dbPost?.title ?? seed.titleAr,
-        titleAr: seed.titleAr,
+        titleAr: dbPost?.title ?? seed.titleAr,
         titleEn: seed.titleEn,
-        content: dbPost?.content ?? seed.summaryAr,
+        content: dbPost?.content ?? seed.contentAr ?? seed.summaryAr,
         summaryAr: seed.summaryAr,
         summaryEn: seed.summaryEn,
         promptTemplate: dbPost?.promptTemplate ?? seed.promptTemplateAr,
-        promptTemplateAr: seed.promptTemplateAr,
+        promptTemplateAr: dbPost?.promptTemplate ?? seed.promptTemplateAr,
         promptTemplateEn: seed.promptTemplateEn,
         tierLevel: dbPost?.tierLevel ?? (seed.isAdvanced ? 'ADVANCED' : 'BASIC'),
         unlockedCount,
         readsCount,
-        unlockedPercent: Math.round((unlockedCount / totalMembers) * 100),
+        completedCount, pendingCount, blockingCount, members,
+        totalMembers, required: seed.code === CV_FOUNDATION_CODE,
+        unlockedPercent: totalMembers ? Math.round((unlockedCount / totalMembers) * 100) : 0,
         readPercent: unlockedCount > 0 ? Math.round((readsCount / unlockedCount) * 100) : 0,
         isCustomized: Boolean(dbPost),
         updatedAt: dbPost?.updatedAt?.toISOString() ?? null,
@@ -1413,6 +1454,7 @@ export class JourneyEngineService implements OnModuleInit {
         post.unlockTriggerCode &&
         !JOURNEY_GUIDANCE_CATALOG.some((s) => s.code === post.unlockTriggerCode)
       ) {
+        const members = audience(post.unlockTriggerCode, post.tierLevel === 'ADVANCED');
         items.push({
           id: post.id,
           code: post.unlockTriggerCode,
@@ -1429,10 +1471,13 @@ export class JourneyEngineService implements OnModuleInit {
           promptTemplateAr: post.promptTemplate || '',
           promptTemplateEn: post.promptTemplate || '',
           tierLevel: post.tierLevel || 'BASIC',
-          unlockedCount: totalMembers,
-          readsCount: post.reads?.length ?? 0,
-          unlockedPercent: 100,
-          readPercent: Math.round(((post.reads?.length ?? 0) / totalMembers) * 100),
+          unlockedCount: members.length,
+          readsCount: members.filter(member => member.read).length,
+          completedCount: members.filter(member => member.completed).length,
+          pendingCount: members.filter(member => member.pending).length,
+          blockingCount: 0, members, totalMembers, required: false,
+          unlockedPercent: totalMembers ? Math.round(members.length / totalMembers * 100) : 0,
+          readPercent: members.length ? Math.round(members.filter(member => member.read).length / members.length * 100) : 0,
           isCustomized: true,
           updatedAt: post.updatedAt.toISOString(),
         });
@@ -1476,7 +1521,7 @@ export class JourneyEngineService implements OnModuleInit {
       data: {
         authorId,
         title: dto.title?.trim() || seed?.titleAr || code,
-        content: dto.content?.trim() || seed?.summaryAr || '',
+        content: dto.content?.trim() || seed?.contentAr || seed?.summaryAr || '',
         promptTemplate:
           dto.promptTemplate?.trim() || seed?.promptTemplateAr || '',
         visibility: 'ALL',

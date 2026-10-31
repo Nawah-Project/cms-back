@@ -1,0 +1,37 @@
+name: Approve production
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_tag:
+        description: Exact build tag from a successful main candidate
+        required: true
+        type: string
+      compatible_migrations:
+        description: Confirm new migrations preserve compatibility with the previous API
+        required: true
+        default: false
+        type: boolean
+permissions:
+  contents: read
+concurrency:
+  group: api-production-approval
+  cancel-in-progress: false
+jobs:
+  approve:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Approve existing tested image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          COMPATIBLE_MIGRATIONS: ${{ inputs.compatible_migrations }}
+        run: |
+          args=()
+          if [ "$COMPATIBLE_MIGRATIONS" = true ]; then args+=(--compatible-migrations); fi
+          python3 scripts/deployment/release.py approve --tag "$CANDIDATE_TAG" "${args[@]}"

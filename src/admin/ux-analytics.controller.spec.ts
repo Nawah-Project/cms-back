@@ -1,3 +1,4 @@
+import { AccountDeletionService } from "./account-deletion.service";
 import { Test, TestingModule } from '@nestjs/testing';
 import { UxAnalyticsController } from './ux-analytics.controller';
 import { UxAnalyticsService } from './ux-analytics.service';
@@ -31,6 +32,7 @@ describe('UxAnalyticsController & AdminController monitoring/ux-analytics', () =
         { provide: UxAnalyticsService, useValue: uxService },
         { provide: PrismaService, useValue: prismaService },
         { provide: AdminService, useValue: adminService },
+        { provide: AccountDeletionService, useValue: { preview: jest.fn(), delete: jest.fn() } },
       ],
     })
       .overrideGuard(JwtAuthGuard)

@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsDateString,
   IsEnum,
   IsIn,
   IsInt,
@@ -13,6 +14,20 @@ import { ApplicationStage } from '../enums/application-stage.enum';
 import { ApplicationOutcome } from '../enums/application-outcome.enum';
 
 export class ApplicationQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  cvVersion?: number;
+
+  @IsOptional()
+  @IsDateString({ strict: true })
+  createdFrom?: string;
+
+  @IsOptional()
+  @IsDateString({ strict: true })
+  createdBefore?: string;
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()

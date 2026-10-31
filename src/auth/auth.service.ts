@@ -22,7 +22,9 @@ import { RegisterDto } from './dto/register.dto';
 import { GroupAssignmentService } from '../members/group-assignment.service';
 import { AccountLinkRequiredError } from './social-auth.errors';
 import { EmailVerifierService } from './email-verifier.service';
+import { OperationsPolicyService } from '../operations/operations-policy.service';
 import { EmailSenderService } from './email-sender.service';
+import { publicAdminAccess } from '../admin/admin-access';
 
 export const OTP_TTL_MINUTES = 15;
 export const OTP_TTL_MS = OTP_TTL_MINUTES * 60 * 1000;
@@ -37,6 +39,7 @@ export interface PublicUser {
   emailVerified?: boolean;
   targetJobTitle?: string | null;
   verificationDelivery?: 'SENT' | 'FAILED';
+  adminAccess?: ReturnType<typeof publicAdminAccess>;
 }
 
 export interface TokenPair {
@@ -55,9 +58,16 @@ export class AuthService {
     private readonly groupAssignment: GroupAssignmentService,
     @Optional() emailVerifier?: EmailVerifierService,
     @Optional() emailSender?: EmailSenderService,
+    @Optional() private readonly operationsPolicy?: OperationsPolicyService,
   ) {
     this.emailVerifier = emailVerifier ?? new EmailVerifierService();
     this.emailSender = emailSender ?? new EmailSenderService();
+  }
+
+  async registrationStatus() {
+    return this.operationsPolicy
+      ? this.operationsPolicy.registrationStatus()
+      : { open: true };
   }
 
   private hashRefreshToken(token: string): string {
@@ -135,13 +145,19 @@ export class AuthService {
     } // Account exists: keep authenticated verification/retry available.
   }
 
-  private toPublicUser(user: PublicUser): PublicUser {
+  private toPublicUser(
+    user: PublicUser & { adminPermissions?: unknown; isRootAdmin?: boolean },
+  ): PublicUser {
     const rawVerified = user.emailVerified ?? false;
     return {
       id: user.id,
       name: user.name,
       email: user.email,
       role: user.role,
+      adminAccess:
+        user.role === UserRole.ADMIN
+          ? publicAdminAccess(user.adminPermissions, user.isRootAdmin === true)
+          : undefined,
       emailVerified: this.shouldRequireEmailOtp() ? rawVerified : true,
       targetJobTitle: user.targetJobTitle ?? null,
     };
@@ -180,12 +196,6 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
-  private shouldAssignGroupOnRegister(): boolean {
-    return (
-      process.env.ASSIGN_GROUP_ON_REGISTER?.trim().toLowerCase() === 'true'
-    );
-  }
-
   private async ensureInitialJourneyState(
     transaction: Prisma.TransactionClient,
     userId: string,
@@ -218,10 +228,12 @@ export class AuthService {
     dto: RegisterDto,
   ): Promise<{ user: PublicUser; tokens: TokenPair }> {
     const email = dto.email.trim().toLowerCase();
+    await this.operationsPolicy?.assertRegistration();
     await this.emailVerifier.validateEmailAddress(email);
 
     const passwordHash = await bcrypt.hash(dto.password, 12);
-    const assignOnRegister = this.shouldAssignGroupOnRegister();
+    // Specialization is chosen during profile completion; group placement waits for Task zero.
+    const assignOnRegister = false;
     const shouldRequireOtp = this.shouldRequireEmailOtp();
     const otpCode = this.generateOtpCode();
     const now = new Date();
@@ -231,6 +243,7 @@ export class AuthService {
     try {
       const user = await this.groupAssignment.withAssignmentLock(
         async (transaction) => {
+          await this.operationsPolicy?.assertRegistration(transaction);
           const created = await transaction.user.create({
             data: {
               name: dto.name.trim(),
@@ -248,12 +261,11 @@ export class AuthService {
               name: true,
               email: true,
               role: true,
+              isRootAdmin: true,
+              adminPermissions: true,
               emailVerified: true,
             },
           });
-          if (assignOnRegister) {
-            await this.groupAssignment.assignUser(transaction, created.id);
-          }
           await this.ensureInitialJourneyState(
             transaction,
             created.id,
@@ -298,6 +310,8 @@ export class AuthService {
         email: true,
         passwordHash: true,
         role: true,
+        isRootAdmin: true,
+        adminPermissions: true,
         emailVerified: true,
         emailVerificationExpiresAt: true,
         emailVerificationSentAt: true,
@@ -356,6 +370,8 @@ export class AuthService {
         name: true,
         email: true,
         role: true,
+        isRootAdmin: true,
+        adminPermissions: true,
         emailVerified: true,
         emailVerificationCodeHash: true,
         emailVerificationExpiresAt: true,
@@ -407,6 +423,8 @@ export class AuthService {
         name: true,
         email: true,
         role: true,
+        isRootAdmin: true,
+        adminPermissions: true,
         emailVerified: true,
       },
     });
@@ -495,6 +513,8 @@ export class AuthService {
                 name: true,
                 email: true,
                 role: true,
+                isRootAdmin: true,
+                adminPermissions: true,
                 emailVerified: true,
               },
             },
@@ -515,6 +535,8 @@ export class AuthService {
                 name: true,
                 email: true,
                 role: true,
+                isRootAdmin: true,
+                adminPermissions: true,
                 emailVerified: true,
               },
             });
@@ -532,6 +554,7 @@ export class AuthService {
         });
         if (emailAccount) throw new AccountLinkRequiredError();
 
+        await this.operationsPolicy?.assertRegistration(transaction);
         const createdUser = await transaction.user.create({
           data: {
             name: input.name?.trim() || providerEmail.split('@')[0],
@@ -545,6 +568,8 @@ export class AuthService {
             name: true,
             email: true,
             role: true,
+            isRootAdmin: true,
+            adminPermissions: true,
             emailVerified: true,
           },
         });
@@ -556,10 +581,8 @@ export class AuthService {
             providerEmail,
           },
         });
-        const assignOnRegister = this.shouldAssignGroupOnRegister();
-        if (assignOnRegister) {
-          await this.groupAssignment.assignUser(transaction, createdUser.id);
-        }
+        // Specialization is chosen during profile completion; group placement waits for Task zero.
+        const assignOnRegister = false;
         await this.ensureInitialJourneyState(
           transaction,
           createdUser.id,
@@ -595,6 +618,8 @@ export class AuthService {
         email: true,
         refreshTokenHash: true,
         role: true,
+        isRootAdmin: true,
+        adminPermissions: true,
         emailVerified: true,
       },
     });
@@ -645,6 +670,8 @@ export class AuthService {
         name: true,
         email: true,
         role: true,
+        isRootAdmin: true,
+        adminPermissions: true,
         emailVerified: true,
         targetJobTitle: true,
       },
@@ -655,7 +682,7 @@ export class AuthService {
 
   async verifyAccessToken(
     token: string,
-  ): Promise<{ id: string; email: string }> {
+  ): Promise<{ id: string; email: string; role?: UserRole }> {
     try {
       const payload = await this.jwt.verifyAsync<{
         sub: string;
@@ -668,7 +695,12 @@ export class AuthService {
       });
       if (!payload.sub || payload.tokenType !== 'access')
         throw new Error('Wrong token type');
-      return { id: payload.sub, email: payload.email };
+      const account = await this.prisma.user.findUnique({
+        where: { id: payload.sub },
+        select: { id: true, email: true, role: true },
+      });
+      if (!account) throw new Error('Account no longer exists');
+      return account;
     } catch {
       throw new UnauthorizedException('Invalid or expired access token');
     }

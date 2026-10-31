@@ -109,7 +109,7 @@ export class ApplicationsService {
     const journeyState = this.prisma?.userJourneyState?.findUnique
       ? await this.prisma.userJourneyState.findUnique({
           where: { userId },
-          select: { currentWeek: true },
+          select: { currentWeek: true, isGroupUnlocked: true, completedNodeCodes: true },
         })
       : null;
     const journeyWeek =
@@ -140,7 +140,7 @@ export class ApplicationsService {
           ? { prepChecklist: createDto.prepChecklist as Prisma.InputJsonValue }
           : {}),
         interviewNotes: createDto.interviewNotes?.trim() || null,
-        sharedWithGroup: createDto.sharedWithGroup ?? false,
+        sharedWithGroup: Boolean(journeyState?.isGroupUnlocked || journeyState?.completedNodeCodes?.includes("TASK_0") || (journeyState?.currentWeek ?? 0)>=1) && (createDto.sharedWithGroup ?? true),
         closedAt: stage === ApplicationStage.CLOSED ? new Date() : null,
       },
     });
@@ -170,8 +170,15 @@ export class ApplicationsService {
       query.limit && query.limit > 0 ? Math.min(query.limit, 1000) : 20;
     const sortOrder = query.sortOrder?.toUpperCase() === 'ASC' ? 'asc' : 'desc';
     const search = query.search?.trim();
+    if (query.createdFrom && query.createdBefore && new Date(query.createdFrom) >= new Date(query.createdBefore)) {
+      throw new BadRequestException('The period end must be after its start');
+    }
     const where: Prisma.ApplicationWhereInput = {
       userId,
+      ...((query.createdFrom || query.createdBefore) ? { createdAt: {
+        ...(query.createdFrom ? { gte: new Date(query.createdFrom) } : {}),
+        ...(query.createdBefore ? { lt: new Date(query.createdBefore) } : {}),
+      } } : {}),
       ...(query.stage
         ? query.stage === 'ACTIVE'
           ? { stage: { not: ApplicationStage.CLOSED } }
@@ -187,6 +194,12 @@ export class ApplicationsService {
           }
         : {}),
     };
+    if (query.cvVersion) {
+      const versions = await this.prisma.userCvHistory.findMany({where:{userId},orderBy:[{uploadedAt:'asc'},{versionNumber:'asc'}],select:{versionNumber:true,uploadedAt:true}});
+      const index = versions.findIndex(version => version.versionNumber === query.cvVersion);
+      if (index < 0) throw new BadRequestException('This CV version is unavailable for your account');
+      where.AND = [{createdAt:{gte:versions[index].uploadedAt,...(versions[index+1]?{lt:versions[index+1].uploadedAt}:{})}}];
+    }
     const [data, total, unfilteredTotal] = await this.prisma.$transaction([
       this.prisma.application.findMany({
         where,
@@ -347,6 +360,10 @@ export class ApplicationsService {
         updateDto.sharedWithGroup !== undefined &&
         updateDto.sharedWithGroup !== application.sharedWithGroup
       ) {
+        if(updateDto.sharedWithGroup) {
+          const state=await transaction.userJourneyState.findUnique({where:{userId},select:{isGroupUnlocked:true,currentWeek:true,completedNodeCodes:true}});
+          if(!state || !(state.isGroupUnlocked || state.currentWeek>=1 || state.completedNodeCodes.includes('TASK_0'))) throw new BadRequestException('Complete Task 0 to share opportunities with your group');
+        }
         data.sharedWithGroup = updateDto.sharedWithGroup;
       }
       if (Object.keys(data).length === 0) return application;

@@ -7,6 +7,7 @@ import { UserRole } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { prepareProgramMember } from './program-fixture';
+import { GroupAssignmentService } from '../src/members/group-assignment.service';
 import { resetTestDatabase } from './reset-test-database';
 
 describe('Admin group management and monitoring (PostgreSQL e2e)', () => {
@@ -14,9 +15,7 @@ describe('Admin group management and monitoring (PostgreSQL e2e)', () => {
   let server: ReturnType<NestExpressApplication['getHttpServer']>;
   let prisma: PrismaService;
 
-  const previousAssignment=process.env.ASSIGN_GROUP_ON_REGISTER;
   beforeAll(async () => {
-    process.env.ASSIGN_GROUP_ON_REGISTER='true';
     const module = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -35,7 +34,7 @@ describe('Admin group management and monitoring (PostgreSQL e2e)', () => {
     server = app.getHttpServer();
   });
 
-  afterAll(async () => { if(previousAssignment===undefined)delete process.env.ASSIGN_GROUP_ON_REGISTER;else process.env.ASSIGN_GROUP_ON_REGISTER=previousAssignment;await app?.close(); });
+  afterAll(async () => { await app?.close(); });
 
   async function register(key: string) {
     const agent = request.agent(server);
@@ -43,11 +42,12 @@ describe('Admin group management and monitoring (PostgreSQL e2e)', () => {
       .post('/auth/register')
       .send({
         name: `Admin test ${key}`,
-        email: `${key}@admin.example.com`,
+        email: `${key}@example.com`,
         password: 'SecurePass123!',
       })
       .expect(201);
     await prepareProgramMember(prisma, response.body.id as string);
+    await app.get(GroupAssignmentService).assignUserToGroup(response.body.id as string);
     return { agent, userId: response.body.id as string };
   }
 
@@ -55,7 +55,7 @@ describe('Admin group management and monitoring (PostgreSQL e2e)', () => {
     const admin = await register('admin');
     await prisma.user.update({
       where: { id: admin.userId },
-      data: { role: UserRole.ADMIN },
+      data: { role: UserRole.ADMIN, adminPermissions: { COMMUNITY: 'WRITE', OVERVIEW: 'READ' } },
     });
     const firstGroupMembers: Array<{
       agent: ReturnType<typeof request.agent>;

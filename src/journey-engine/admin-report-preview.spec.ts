@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { JourneyEngineService } from './journey-engine.service';
 
@@ -126,4 +126,12 @@ describe('admin report preview isolation', () => {
     expect(tx.sideTaskSubmission.findMany).not.toHaveBeenCalled();
     expect(tx.userJourneyState.update).not.toHaveBeenCalled();
   });
+  it('enforces the CV foundation on member reports while admins retain full read access', async () => {
+    tx.user.findUnique = jest.fn().mockResolvedValue({role:'USER'});
+    await expect(service.getReports('member-1')).rejects.toBeInstanceOf(ForbiddenException);
+    tx.user.findUnique.mockResolvedValue({role:'ADMIN'});
+    await expect(service.getReports('member-1')).resolves.toMatchObject({currentWeek:1});
+    expect(tx.userJourneyState.update).not.toHaveBeenCalled();
+  });
+
 });

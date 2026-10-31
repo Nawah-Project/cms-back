@@ -16,6 +16,7 @@ describe('AdminService', () => {
       user: {
         findUnique: jest.fn(),
       },
+      userCvHistory: { findMany: jest.fn().mockResolvedValue([]) },
       application: {
         aggregate: jest.fn(),
         groupBy: jest.fn(),

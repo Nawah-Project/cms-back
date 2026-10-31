@@ -151,6 +151,16 @@ describe('ApplicationsService', () => {
     expect(result.unfilteredTotal).toBe(5);
   });
 
+  it('filters a change cohort by inclusive start and exclusive end while retaining member ownership', async () => {
+    await service.findAll('user-id', { createdFrom: '2026-10-01T12:00:00Z', createdBefore: '2026-10-04T12:00:00Z', page: 2, limit: 100 });
+    expect(prisma.application.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: 'user-id', createdAt: { gte: new Date('2026-10-01T12:00:00Z'), lt: new Date('2026-10-04T12:00:00Z') } }, skip: 100, take: 100 }));
+  });
+
+  it('rejects a reversed change period', async () => {
+    await expect(service.findAll('user-id', { createdFrom: '2026-10-05T12:00:00Z', createdBefore: '2026-10-04T12:00:00Z' })).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.application.findMany).not.toHaveBeenCalled();
+  });
+
   it('allows editing an application already closed with NO_RESPONSE', async () => {
     application.stage = 'CLOSED';
     application.outcome = 'NO_RESPONSE';
@@ -191,4 +201,25 @@ describe('ApplicationsService', () => {
     expect(stats.active.total).toBe(3);
     expect(stats.closed.noResponse).toBe(2);
   });
+  it('uses only the caller CV history and an inclusive-start/exclusive-end cohort', async () => {
+    const start = new Date('2026-10-20T12:00:00Z'), end = new Date('2026-10-21T12:00:00Z');
+    prisma.userCvHistory = {findMany: jest.fn().mockResolvedValue([{versionNumber:1,uploadedAt:start},{versionNumber:2,uploadedAt:end}])};
+    await service.findAll('user-id',{cvVersion:1,stage:ApplicationStage.INTERVIEW});
+    expect(prisma.userCvHistory.findMany).toHaveBeenCalledWith(expect.objectContaining({where:{userId:'user-id'}}));
+    expect(prisma.application.findMany).toHaveBeenCalledWith(expect.objectContaining({where:expect.objectContaining({userId:'user-id',stage:ApplicationStage.INTERVIEW,AND:[{createdAt:{gte:start,lt:end}}]})}));
+    await expect(service.findAll('user-id',{cvVersion:999})).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('keeps sharing disabled before Task 0, then defaults it on while respecting opt-out',async()=>{
+    prisma.userJourneyState={findUnique:jest.fn().mockResolvedValue({currentWeek:0,isGroupUnlocked:false,completedNodeCodes:[]})};
+    expect((await service.create('user-id',{companyName:'Company',jobTitle:'Designer',sharedWithGroup:true})).sharedWithGroup).toBe(false);
+    prisma.userJourneyState.findUnique.mockResolvedValue({currentWeek:1,isGroupUnlocked:true,completedNodeCodes:['TASK_0']});
+    expect((await service.create('user-id',{companyName:'Company',jobTitle:'Designer'})).sharedWithGroup).toBe(true);
+    expect((await service.create('user-id',{companyName:'Company',jobTitle:'Designer',sharedWithGroup:false})).sharedWithGroup).toBe(false);
+  });
+  it('rejects turning sharing on through an update before the group unlocks',async()=>{
+    transaction.userJourneyState={findUnique:jest.fn().mockResolvedValue({currentWeek:0,isGroupUnlocked:false,completedNodeCodes:[]})};
+    await expect(service.update('user-id','application-id',{sharedWithGroup:true})).rejects.toBeInstanceOf(BadRequestException);
+  });
+
 });

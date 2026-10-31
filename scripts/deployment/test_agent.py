@@ -36,6 +36,21 @@ class DeploymentTests(unittest.TestCase):
         agent.atomic(self.root/'production-images.json',{'services':{k:{'image':v['imageRef']} for k,v in self.state['components'].items()}})
         self.a=agent.Agent(self.root)
 
+    def test_docker_containerd_manifest_id_maps_to_the_exact_config_digest(self):
+        import hashlib, io, tarfile
+        content = json.dumps({'config': {'digest': IMAGE}}).encode()
+        manifest_id = 'sha256:' + hashlib.sha256(content).hexdigest()
+        archive = self.root/'oci.tar.gz'
+        with tarfile.open(archive, 'w:gz') as bundle:
+            item = tarfile.TarInfo('blobs/sha256/' + manifest_id.split(':')[1]);item.size=len(content)
+            bundle.addfile(item,io.BytesIO(content))
+        image = {'Id':manifest_id,'Architecture':'amd64','Descriptor':{'digest':manifest_id}}
+        agent.verify_loaded_identity(image,{'imageId':IMAGE},archive)
+        with self.assertRaises(agent.PermanentError):
+            agent.verify_loaded_identity(image,{'imageId':'sha256:'+'2'*64},archive)
+        with self.assertRaises(agent.PermanentError):
+            agent.verify_loaded_identity({**image,'Id':'sha256:'+'3'*64},{'imageId':IMAGE},archive)
+
     def test_wrong_repository_commit_and_approval_are_rejected(self):
         for mutate in [lambda d:d[1].update(repository='Other/project'),lambda d:d[1].update(commit='b'*40),
                        lambda d:d[2].update(archiveSha256='0'*64),lambda d:d[1].update(imageRef='evil/image:tag')]:

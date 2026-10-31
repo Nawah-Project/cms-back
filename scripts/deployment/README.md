@@ -24,7 +24,7 @@ python3 /data/cms/deployment/agent.py stage --component frontend --tag BUILD_TAG
 python3 /data/cms/deployment/agent.py stage --component api --tag BUILD_TAG
 ```
 
-Staging downloads and verifies the archive and Docker image identity, without starting the candidate against production. Confirm the first image's configuration and smoke result from CI. Only then set `enabled` to `true` in `config.json` and approve the chosen release. There is no implicit first production approval.
+Staging downloads and verifies the archive and Docker image identity (including the exact OCI manifest/config relationship when Docker stores image IDs differently), without starting the candidate against production. Confirm the first image's configuration and smoke result from CI. Only then set `enabled` to `true` in `config.json` and approve the chosen release. There is no implicit first production approval.
 
 The server uses outbound HTTPS only. Downloads are serialized globally, capped at **1 MiB/s**, resumed after interruptions and verified before `docker load`. Metadata checks stay below unauthenticated GitHub's 60 requests/hour when there is no new release. Each repository is checked every five minutes. Release downloads are complete compressed images of the changed component, not registry layer deltas; only actual compressed archive sizes should be used for bandwidth estimates.
 

@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import time
 import urllib.error
 import urllib.request
@@ -76,6 +77,30 @@ def validate(repo, component, release, manifest, approval):
     for key in ['repository', 'tag', 'commit', 'archiveSha256']:
         if approval.get(key) != manifest.get(key): raise PermanentError('Approval does not match candidate')
     if approval.get('schema') != 1 or not approval.get('actor'): raise PermanentError('Approval is missing')
+
+def verify_loaded_identity(image, manifest, archive):
+    if image['Architecture'] != 'amd64': raise PermanentError('Loaded image architecture mismatch')
+    if image['Id'] == manifest['imageId']: return
+    # Classic Docker identifies an image by its config; the containerd store in
+    # Docker 29 identifies it by the OCI manifest. Verify the hashed relationship
+    # inside the already checksummed archive rather than weakening identity checks.
+    descriptor = image.get('Descriptor', {})
+    digest_value = descriptor.get('digest', '')
+    if image['Id'] != digest_value or not re.fullmatch('sha256:[0-9a-f]{64}', digest_value):
+        raise PermanentError('Loaded image identity mismatch')
+    expected_path = 'blobs/sha256/' + digest_value.split(':')[1]
+    with tarfile.open(archive, 'r|gz') as bundle:
+        for member in bundle:
+            if member.name != expected_path: continue
+            if member.size > 1024 * 1024: raise PermanentError('Unexpected OCI manifest size')
+            raw = bundle.extractfile(member).read()
+            if 'sha256:' + hashlib.sha256(raw).hexdigest() != digest_value:
+                raise PermanentError('OCI manifest hash mismatch')
+            content = json.loads(raw)
+            if content.get('config', {}).get('digest') != manifest['imageId']:
+                raise PermanentError('OCI image config mismatch')
+            return
+    raise PermanentError('Loaded OCI manifest is absent from archive')
 
 class Agent:
     def __init__(self, directory):
@@ -145,10 +170,11 @@ class Agent:
         m = data[1]
         command(['docker','image','load','--input',str(archive)])
         image = json.loads(command(['docker','image','inspect',m['imageRef']]))[0]
-        if image['Id'] != m['imageId'] or image['Architecture'] != 'amd64': raise PermanentError('Loaded image identity mismatch')
+        verify_loaded_identity(image,m,archive)
         if image['Config'].get('Labels',{}).get('org.opencontainers.image.revision') != m['commit']:
             raise PermanentError('Loaded image revision mismatch')
-        self.event(component,'image_staged',tag=m['tag'],imageId=m['imageId'])
+        self.event(component,'image_staged',tag=m['tag'],imageId=image['Id'],configId=m['imageId'])
+        return image['Id']
 
     def migration_check(self, m, approval):
         sql = 'SELECT migration_name,checksum FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL ORDER BY migration_name'
@@ -205,8 +231,9 @@ class Agent:
             with urllib.request.urlopen(req,timeout=10) as r:
                 if r.status != 200: raise DeployError('Post-release health probe failed')
 
-    def apply(self, component, data):
+    def apply(self, component, data, loaded_image_id=None):
         release,m,approval,_ = data
+        expected_image_id = loaded_image_id or m['imageId']
         self.healthy(component)
         before = self.inventory(); current = self.state['components'][component]
         images = {name:value['imageRef'] for name,value in self.state['components'].items()}
@@ -236,7 +263,7 @@ class Agent:
                     raise DeployError('A non-target container changed unexpectedly')
             api_name=self.config['containers']['api']
             if before[api_name]['Mounts'] != after[api_name]['Mounts']: raise DeployError('CV storage mounts changed')
-            if after[self.config['containers'][component]]['Image'] != m['imageId']: raise DeployError('Running image does not match candidate')
+            if after[self.config['containers'][component]]['Image'] != expected_image_id: raise DeployError('Running image does not match candidate')
         except Exception:
             try:
                 command(self.compose(previous_file,'up','-d','--no-deps','--no-build','--pull','never','--wait','--wait-timeout','180',component))
@@ -247,7 +274,7 @@ class Agent:
                 self.event(component,'rollback_failed',failedTag=m['tag']); raise DeployError('Rollback needs operator attention; recovery state retained') from None
             raise PermanentError('Candidate failed health checks and was rolled back') from None
         self.image_override(images,active)
-        self.state['components'][component]={'imageRef':m['imageRef'],'imageId':m['imageId'],'tag':m['tag'],
+        self.state['components'][component]={'imageRef':m['imageRef'],'imageId':expected_image_id,'configId':m['imageId'],'tag':m['tag'],
             'commit':m['commit'],'previous':{k:v for k,v in current.items() if k!='previous'}}
         self.state.pop('pending',None); self.state.get('failed',{}).pop(component,None); self.save()
         self.event(component,'deployed',tag=m['tag'],commit=m['commit'],seconds=round(time.monotonic()-started,2))
@@ -275,11 +302,16 @@ class Agent:
             if mode=='poll' and self.state.get('failed',{}).get(name)==m['tag'] and not retry: continue
             try:
                 if mode=='check':self.event(name,'candidate_available',tag=m['tag']);continue
-                archive=self.stage(name,data);self.load(name,data,archive)
-                if mode=='stage':continue
-                self.apply(name,data)
+                archive=self.stage(name,data);loaded_id=self.load(name,data,archive)
+                if mode=='stage':
+                    if self.state.get('failed',{}).get(name)==m['tag']:
+                        self.state['failed'].pop(name);self.save()
+                    continue
+                self.apply(name,data,loaded_id)
             except PermanentError as e:
-                self.state.setdefault('failed',{})[name]=m['tag'];self.save();self.event(name,'candidate_rejected',tag=m['tag'],reason=str(e))
+                if mode in ['apply','poll']:
+                    self.state.setdefault('failed',{})[name]=m['tag'];self.save()
+                self.event(name,'candidate_rejected',tag=m['tag'],reason=str(e))
                 if mode!='poll':raise
             except Exception as e:
                 self.event(name,'transient_failure',tag=m['tag'],reason=str(e) if isinstance(e,DeployError) else type(e).__name__)

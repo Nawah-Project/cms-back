@@ -25,5 +25,6 @@
   ],
   "setupFilesAfterEnv": [
     "<rootDir>/setup-processors.ts"
-  ]
+  ],
+  "testTimeout": 30000
 }

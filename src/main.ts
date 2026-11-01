@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
-import { json, urlencoded } from 'express';
+import { requestBodyParsers } from './config/body-parsers';
 import { OperationsCollectorService } from './operations/operations-collector.service';
 import cookieParser from 'cookie-parser';
 import { validateEnvironment } from './config/env.validation';
@@ -17,8 +17,7 @@ async function bootstrap() {
   if (trustProxy > 0) expressApp.set('trust proxy', trustProxy);
   app.use(app.get(OperationsCollectorService).middleware());
   app.use(helmet());
-  app.use(json({ limit: '1mb' }));
-  app.use(urlencoded({ extended: false, limit: '1mb' }));
+  app.use(...requestBodyParsers());
   app.enableCors({
     origin: (
       process.env.FRONTEND_ORIGIN ||

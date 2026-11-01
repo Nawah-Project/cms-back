@@ -1,3 +1,4 @@
+import { IndividualAccessService } from '../individual-research/individual-access.service';
 import {
   BadRequestException,
   ForbiddenException,
@@ -81,6 +82,9 @@ export interface JourneyStateResponse {
   weeklyStats: WeeklyConversionStats;
   features: { groups: boolean; tableView: boolean; professionalTasks: boolean; analytics: boolean };
   cvFoundation: ReturnType<typeof cvFoundationStatus>;
+  normalFeatures?: {analytics:boolean;groups:boolean;tableView:boolean;professionalTasks:boolean};
+  individualAccess?: Awaited<ReturnType<IndividualAccessService['decisions']>>;
+  reportAccess?: Awaited<ReturnType<IndividualAccessService['reportAccess']>>;
 }
 
 export interface JobMarketCompassPlatform {
@@ -105,6 +109,7 @@ export class JourneyEngineService implements OnModuleInit {
     private readonly prisma: PrismaService,
     @Optional() private readonly groupAssignment?: GroupAssignmentService,
     @Optional() private readonly eventEmitter?: EventEmitter2,
+    @Optional() private readonly individualAccess?: IndividualAccessService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -896,7 +901,7 @@ export class JourneyEngineService implements OnModuleInit {
 
   async markInsightRead(userId: string, code: string): Promise<UserJourneyState> {
     const state = await this.getOrCreateUserState(userId);
-    if (!(state.unlockedInsightCodes ?? []).includes(code)) throw new ForbiddenException('Complete the required quest to unlock this guidance');
+    if (!(state.unlockedInsightCodes ?? []).includes(code) && !await this.individualAccess?.allows(userId,'GUIDANCE',code,'INTERACT')) throw new ForbiddenException('Complete the required quest to unlock this guidance');
     const post = await this.prisma.feedbackPost.findFirst({ where: {
       unlockTriggerCode: code, archivedAt: null,
       OR: [{ visibility: 'ALL' }, { visibility: 'DIRECT', targetUserId: userId },
@@ -1048,15 +1053,21 @@ export class JourneyEngineService implements OnModuleInit {
     const interviewsOrResponses = metrics.positive, conversionRate = metrics.positiveRate ?? 0;
 
     const foundation = await this.getCvFoundation(userId, state);
+    const normalFeatures = {analytics:foundation.completed,groups:(state.completedNodeCodes??[]).includes('TASK_0')||state.currentWeek>=1,tableView:state.canUseTableView,professionalTasks:professionalTasksUnlocked(state.currentWeek,state.readInsightCodes??[])};
+    const featureDecisions = this.individualAccess ? await this.individualAccess.decisions(userId,[...Object.entries(normalFeatures).filter(([key])=>key!=='groups').map(([key,value])=>({resourceType:'FEATURE',resourceId:key,normalView:value,normalInteract:value})),...JOURNEY_GUIDANCE_CATALOG.map(g=>({resourceType:'GUIDANCE',resourceId:g.code,normalView:(state.unlockedInsightCodes??[]).includes(g.code),normalInteract:(state.unlockedInsightCodes??[]).includes(g.code)}))]) : [];
+    const reportAccess = this.individualAccess ? await this.individualAccess.reportAccess(userId,state,foundation.completed) : undefined;
     return {
       state,
       cvFoundation: foundation,
       features: {
-        analytics: foundation.completed,
+        analytics: foundation.completed || Boolean(reportAccess?.performance.view) || Boolean(reportAccess?.weeks.some(w=>w.view)) || Boolean(reportAccess?.final.view),
         groups: (state.completedNodeCodes ?? []).includes('TASK_0') || state.currentWeek >= 1,
-        tableView: state.canUseTableView,
-        professionalTasks: professionalTasksUnlocked(state.currentWeek, state.readInsightCodes ?? []),
+        tableView: state.canUseTableView || featureDecisions.some(r=>r.resourceId==='tableView'&&r.view),
+        professionalTasks: professionalTasksUnlocked(state.currentWeek, state.readInsightCodes ?? []) || featureDecisions.some(r=>r.resourceId==='professionalTasks'&&r.view),
       },
+      normalFeatures,
+      individualAccess: featureDecisions,
+      reportAccess,
       currentNode,
       currentWeekNodes,
       nodes: enrichedNodes,
@@ -1096,13 +1107,14 @@ export class JourneyEngineService implements OnModuleInit {
     };
   }
 
-  async getReports(userId: string) {
+  async getReports(userId: string, scope = 'performance') {
     // Reports are a pure read; a missing state is represented by the empty
     // baseline below rather than initialized by a GET request.
-    return this.readReportsSnapshot(userId, false);
+    return this.readReportsSnapshot(userId, false, scope);
   }
 
-  private async readReportsSnapshot(userId: string, adminPreview: boolean) {
+  private async readReportsSnapshot(userId: string, adminPreview: boolean, scope = 'performance') {
+    if(!['performance','week:1','week:2','week:3','week:4','final'].includes(scope))throw new BadRequestException('Unknown report scope');
     // One repeatable snapshot: all owned rows, no client pagination limit.
     // This method itself is read-only; adminPreview also never initializes state.
     return this.prisma.$transaction(async (tx) => {
@@ -1163,19 +1175,35 @@ export class JourneyEngineService implements OnModuleInit {
         weekStartedAt: null,
       };
 
-      if (!adminPreview && !cvFoundationStatus(state, cvs).completed) {
+      const foundationReady=cvFoundationStatus(state,cvs).completed;
+      const access=this.individualAccess ? await this.individualAccess.reportAccess(userId,state,foundationReady,tx) : undefined;
+      const reportDecision=scope==='performance'?access?.performance:scope==='final'?access?.final:access?.weeks.find(w=>w.resourceId===scope.slice(5));
+      // Keep legacy callers/normal users unchanged. Exceptional access is exact-scope only.
+      const allowed=access ? Boolean(reportDecision?.view) : foundationReady;
+      if (!adminPreview && !allowed) {
         const account = await tx.user.findUnique({ where: { id: userId }, select: { role: true } });
         if (account?.role !== 'ADMIN') throw new ForbiddenException({ code: 'CV_FOUNDATION_REQUIRED', guidanceUnlocked: (state.completedNodeCodes as string[]).includes('TASK_0') || state.currentWeek >= 1, message: 'Complete the CV guidance with an updated CV to unlock performance analytics' });
       }
-      return buildReportsPayload({
-        applications,
-        activities,
+      const selectedWeek=scope.startsWith('week:')?Number(scope.slice(5)):null;
+      const exceptional = !adminPreview && reportDecision?.source === 'ADMIN';
+      const scopedWeeks = selectedWeek!==null && exceptional ? [selectedWeek-1,selectedWeek] : null;
+      const payload=buildReportsPayload({
+        applications: scopedWeeks?applications.filter(a=>scopedWeeks.includes(a.journeyWeek)):applications,
+        activities: scopedWeeks?activities.filter(a=>scopedWeeks.includes(a.journeyWeek)):activities,
         cvs,
         tasks,
         includeLockedWeeks: adminPreview,
+        visibleWeekNumbers: !adminPreview && selectedWeek!==null ? [selectedWeek] : [],
         journeyNodes: journeyNodes.length ? journeyNodes : [...JOURNEY_V4_NODES],
         state,
       });
+      // Grant only chart viewing; keep manual-update eligibility and every completion fact unchanged.
+      if(exceptional && scope==='performance') payload.analyticsAccess={...payload.analyticsAccess,cv:true,pipeline:true,tailoring:true,publishing:true,networking:true};
+      if(scopedWeeks) {
+        payload.weeks=payload.weeks.filter(w=>scopedWeeks.includes(w.week));
+        payload.weeklyStages=payload.weeklyStages.map(stage=>stage.week===selectedWeek?stage:{week:stage.week,available:false as const});
+      }
+      return adminPreview ? payload : {...payload,scope,access};
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
 

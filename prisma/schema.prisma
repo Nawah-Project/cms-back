@@ -154,6 +154,10 @@ model User {
   adminPermissionActions     AdminPermissionAudit[]       @relation("AdminPermissionActor")
   adminPermissionChanges     AdminPermissionAudit[]       @relation("AdminPermissionTarget")
 
+  researchCases      IndividualResearchCase[]   @relation("ResearchParticipant")
+  ownedResearchCases IndividualResearchCase[]   @relation("ResearchOwner")
+  researchOverrides  IndividualAccessOverride[] @relation("ResearchOverrideUser")
+
   @@map("users")
 }
 
@@ -391,24 +395,25 @@ model Application {
 }
 
 model Task {
-  id             String              @id @default(uuid()) @db.Uuid
-  userId         String              @db.Uuid
-  createdById    String              @db.Uuid
-  source         TaskSource          @default(MENTOR_ASSIGNED)
-  title          String              @db.VarChar(200)
-  description    String?             @db.VarChar(5000)
-  status         TaskStatus          @default(TODO)
-  priority       TaskPriority        @default(MEDIUM)
-  mentorPriority Boolean             @default(false)
-  startDate      DateTime?
-  dueDate        DateTime?
-  completedAt    DateTime?
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
-  user           User                @relation("TaskAssignee", fields: [userId], references: [id], onDelete: Cascade)
-  createdBy      User                @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  checklist      TaskChecklistItem[]
-  notes          TaskNote[]
+  individualPlanItems IndividualCasePlanItem[]
+  id                  String                   @id @default(uuid()) @db.Uuid
+  userId              String                   @db.Uuid
+  createdById         String                   @db.Uuid
+  source              TaskSource               @default(MENTOR_ASSIGNED)
+  title               String                   @db.VarChar(200)
+  description         String?                  @db.VarChar(5000)
+  status              TaskStatus               @default(TODO)
+  priority            TaskPriority             @default(MEDIUM)
+  mentorPriority      Boolean                  @default(false)
+  startDate           DateTime?
+  dueDate             DateTime?
+  completedAt         DateTime?
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  user                User                     @relation("TaskAssignee", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy           User                     @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  checklist           TaskChecklistItem[]
+  notes               TaskNote[]
 
   @@index([userId], map: "IDX_tasks_userId")
   @@index([createdById], map: "IDX_tasks_createdById")
@@ -455,27 +460,28 @@ model TaskNote {
 }
 
 model FeedbackPost {
-  id                String             @id @default(uuid()) @db.Uuid
-  authorId          String             @db.Uuid
-  title             String             @db.VarChar(200)
-  content           String             @db.VarChar(20000)
-  visibility        FeedbackVisibility
-  groupId           String?            @db.Uuid
-  targetUserId      String?            @db.Uuid
-  context           FeedbackContext    @default(GENERAL)
-  tags              FeedbackTag[]      @default([])
-  unlockTriggerCode String?            @db.VarChar(100)
-  promptTemplate    String?            @db.Text
-  tierLevel         String?            @default("BASIC")
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  publishedAt       DateTime           @default(now())
-  archivedAt        DateTime?
-  author            User               @relation("FeedbackAuthor", fields: [authorId], references: [id], onDelete: Restrict)
-  group             Group?             @relation(fields: [groupId], references: [id], onDelete: Restrict)
-  targetUser        User?              @relation("FeedbackTarget", fields: [targetUserId], references: [id], onDelete: Restrict)
-  resources         FeedbackResource[]
-  reads             FeedbackRead[]
+  individualPlanItems IndividualCasePlanItem[]
+  id                  String                   @id @default(uuid()) @db.Uuid
+  authorId            String                   @db.Uuid
+  title               String                   @db.VarChar(200)
+  content             String                   @db.VarChar(20000)
+  visibility          FeedbackVisibility
+  groupId             String?                  @db.Uuid
+  targetUserId        String?                  @db.Uuid
+  context             FeedbackContext          @default(GENERAL)
+  tags                FeedbackTag[]            @default([])
+  unlockTriggerCode   String?                  @db.VarChar(100)
+  promptTemplate      String?                  @db.Text
+  tierLevel           String?                  @default("BASIC")
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  publishedAt         DateTime                 @default(now())
+  archivedAt          DateTime?
+  author              User                     @relation("FeedbackAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+  group               Group?                   @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  targetUser          User?                    @relation("FeedbackTarget", fields: [targetUserId], references: [id], onDelete: Restrict)
+  resources           FeedbackResource[]
+  reads               FeedbackRead[]
 
   @@index([authorId], map: "IDX_feedback_posts_authorId")
   @@index([visibility], map: "IDX_feedback_posts_visibility")
@@ -759,4 +765,147 @@ model OperationsSettingsAudit {
 
   @@index([createdAt])
   @@map("operations_settings_audit")
+}
+
+// Private individual research records. Never feed these to group/marketing events.
+model IndividualResearchCase {
+  id                 String                      @id @default(uuid()) @db.Uuid
+  userId             String                      @db.Uuid
+  ownerId            String                      @db.Uuid
+  allowedAdminIds    String[]                    @default([]) @db.Uuid
+  title              String                      @db.VarChar(160)
+  goal               String                      @db.VarChar(3000)
+  hypothesis         String                      @db.VarChar(3000)
+  status             String                      @default("DRAFT") @db.VarChar(20)
+  nextStep           String?                     @db.VarChar(2000)
+  followUpAt         DateTime?
+  consentStatus      String                      @default("NOT_RECORDED") @db.VarChar(20)
+  consentAt          DateTime?
+  consentMethod      String?                     @db.VarChar(30)
+  consentEvidence    String?                     @db.VarChar(2000)
+  consentWithdrawnAt DateTime?
+  retentionUntil     DateTime
+  review             Json?
+  requestId          String                      @unique @db.Uuid
+  createdAt          DateTime                    @default(now())
+  updatedAt          DateTime                    @updatedAt
+  user               User                        @relation("ResearchParticipant", fields: [userId], references: [id], onDelete: Cascade)
+  owner              User                        @relation("ResearchOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  sessions           IndividualCaseSession[]
+  observations       IndividualCaseObservation[]
+  planItems          IndividualCasePlanItem[]
+  overrides          IndividualAccessOverride[]
+  events             IndividualCaseEvent[]
+
+  @@index([userId, status])
+  @@index([ownerId, updatedAt])
+  @@index([retentionUntil])
+  @@map("individual_research_cases")
+}
+
+model IndividualCaseSession {
+  id                     String                      @id @default(uuid()) @db.Uuid
+  caseId                 String                      @db.Uuid
+  kind                   String                      @db.VarChar(20)
+  heldAt                 DateTime
+  goal                   String                      @db.VarChar(2000)
+  topics                 String[]                    @default([])
+  participantStatements  String?                     @db.VarChar(6000)
+  researcherObservations String?                     @db.VarChar(6000)
+  barriers               String?                     @db.VarChar(3000)
+  hypotheses             String?                     @db.VarChar(3000)
+  agreements             String?                     @db.VarChar(3000)
+  nextActions            String?                     @db.VarChar(3000)
+  outcome                String?                     @db.VarChar(3000)
+  followUpAt             DateTime?
+  followUpStatus         String                      @default("PENDING") @db.VarChar(20)
+  requestId              String                      @db.Uuid
+  createdAt              DateTime                    @default(now())
+  case                   IndividualResearchCase      @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  observations           IndividualCaseObservation[]
+
+  @@unique([caseId, requestId])
+  @@map("individual_case_sessions")
+}
+
+model IndividualCaseObservation {
+  id        String                 @id @default(uuid()) @db.Uuid
+  caseId    String                 @db.Uuid
+  sessionId String?                @db.Uuid
+  kind      String                 @db.VarChar(30)
+  lens      String                 @default("OTHER") @db.VarChar(30)
+  content   String                 @db.VarChar(6000)
+  evidence  String?                @db.VarChar(3000)
+  status    String                 @default("NEEDS_EVIDENCE") @db.VarChar(25)
+  isBarrier Boolean                @default(false)
+  requestId String                 @db.Uuid
+  createdAt DateTime               @default(now())
+  case      IndividualResearchCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  session   IndividualCaseSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@unique([caseId, requestId])
+  @@map("individual_case_observations")
+}
+
+model IndividualCasePlanItem {
+  id                  String                 @id @default(uuid()) @db.Uuid
+  caseId              String                 @db.Uuid
+  title               String                 @db.VarChar(200)
+  goal                String?                @db.VarChar(2000)
+  activity            String?                @db.VarChar(3000)
+  completionCondition String                 @db.VarChar(2000)
+  resourceUrl         String?                @db.VarChar(2048)
+  nodeCode            String?                @db.VarChar(100)
+  taskId              String?                @db.Uuid
+  feedbackId          String?                @db.Uuid
+  dueAt               DateTime?
+  status              String                 @default("OPEN") @db.VarChar(20)
+  completedAt         DateTime?
+  requestId           String                 @db.Uuid
+  createdAt           DateTime               @default(now())
+  case                IndividualResearchCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  task                Task?                  @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  feedback            FeedbackPost?          @relation(fields: [feedbackId], references: [id], onDelete: SetNull)
+
+  @@unique([caseId, requestId])
+  @@map("individual_case_plan_items")
+}
+
+model IndividualAccessOverride {
+  id           String                 @id @default(uuid()) @db.Uuid
+  caseId       String                 @db.Uuid
+  userId       String                 @db.Uuid
+  resourceType String                 @db.VarChar(40)
+  resourceId   String                 @db.VarChar(100)
+  permission   String                 @db.VarChar(10)
+  reason       String                 @db.VarChar(2000)
+  issuedBy     String                 @db.Uuid
+  startsAt     DateTime               @default(now())
+  endsAt       DateTime?
+  status       String                 @default("ACTIVE") @db.VarChar(20)
+  revokedAt    DateTime?
+  requestId    String                 @db.Uuid
+  createdAt    DateTime               @default(now())
+  case         IndividualResearchCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  user         User                   @relation("ResearchOverrideUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([caseId, requestId])
+  @@index([userId, resourceType, resourceId, status])
+  @@map("individual_access_overrides")
+}
+
+model IndividualCaseEvent {
+  id        String                 @id @default(uuid()) @db.Uuid
+  caseId    String                 @db.Uuid
+  actorId   String?                @db.Uuid
+  action    String                 @db.VarChar(60)
+  entityId  String?                @db.Uuid
+  requestId String?                @db.Uuid
+  metadata  Json?
+  createdAt DateTime               @default(now())
+  case      IndividualResearchCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@unique([caseId, requestId])
+  @@index([caseId, createdAt])
+  @@map("individual_case_events")
 }

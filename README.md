@@ -126,3 +126,7 @@ Registration now always requires email verification: verify SMTP delivery in the
 intended deployment before admitting pilot members. SMTP failure retains the
 pending authenticated account and supports fresh-code resend; it never marks the
 email verified automatically. Test mode alone captures synthetic OTPs in memory.
+
+## Individual Experience Studio (development)
+
+Arabic implementation, access policy and test notes: [Individual Experience Studio](docs/individual-experience-studio-implementation.md). This feature branch has not been deployed to production.

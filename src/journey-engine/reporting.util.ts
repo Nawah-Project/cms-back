@@ -111,11 +111,13 @@ function buildWeeklyStageSummaries(input: {
   activities: ReportActivityInput[];
   nodes: readonly ReportJourneyNodeInput[];
   includeLockedWeeks?: boolean;
+  visibleWeekNumbers?: number[];
   state: ReportStateInput;
 }) {
   const completed = new Set(input.state.completedNodeCodes);
   const visible = (week: number) =>
     input.includeLockedWeeks ||
+    input.visibleWeekNumbers?.includes(week) ||
     week <= input.state.currentWeek ||
     completed.has(`W${week}_REVIEW`) ||
     input.state.currentNodeCode === 'FINAL_REPORT';
@@ -179,6 +181,7 @@ export function buildReportsPayload(input: {
   state: ReportStateInput;
   journeyNodes?: ReportJourneyNodeInput[];
   includeLockedWeeks?: boolean;
+  visibleWeekNumbers?: number[];
   asOf?: Date;
 }) {
   const asOf = input.asOf ?? new Date();
@@ -275,6 +278,7 @@ export function buildReportsPayload(input: {
     activities: input.activities,
     nodes: input.journeyNodes ?? JOURNEY_V4_NODES,
     includeLockedWeeks: input.includeLockedWeeks,
+    visibleWeekNumbers: input.visibleWeekNumbers,
     state: input.state,
   });
   const readGuidance = JOURNEY_GUIDANCE_CATALOG

@@ -27,8 +27,8 @@ export class JourneyEngineController {
   constructor(private readonly journeyEngine: JourneyEngineService) {}
 
   @Get('reports')
-  getReports(@CurrentUser('id') userId: string) {
-    return this.journeyEngine.getReports(userId);
+  getReports(@CurrentUser('id') userId: string, @Query('scope') scope?: string) {
+    return this.journeyEngine.getReports(userId, scope);
   }
 
   @Post('final-report/complete')

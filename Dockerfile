@@ -1,4 +1,4 @@
-FROM node:24-alpine AS base
+FROM node:24.22.2-alpine@sha256:4eefa1bfce4197942661ef9148247d779ddf1bb0ee006d3294a467609de60724 AS base
 RUN apk add --no-cache openssl libc6-compat
 WORKDIR /app
 

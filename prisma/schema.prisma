@@ -154,6 +154,7 @@ model User {
   adminPermissionActions     AdminPermissionAudit[]       @relation("AdminPermissionActor")
   adminPermissionChanges     AdminPermissionAudit[]       @relation("AdminPermissionTarget")
 
+  consultingRoadmaps CareerConsultingRoadmap[]
   consultingCases CareerConsultingCase[] @relation("ConsultingParticipant")
   ownedConsultingCases CareerConsultingCase[] @relation("ConsultingOwner")
 
@@ -1102,4 +1103,24 @@ model CareerConsultingFileDeletion {
   updatedAt DateTime @updatedAt
   @@index([attempts,createdAt])
   @@map("career_consulting_file_deletions")
+}
+
+// Consultant-only preparation. No participant, service consent, or programme effect.
+model CareerConsultingRoadmap {
+  id String @id @default(uuid()) @db.Uuid
+  ownerId String @db.Uuid
+  owner User @relation(fields:[ownerId],references:[id],onDelete:Cascade)
+  title String @db.VarChar(160)
+  content Json
+  revision Int @default(1)
+  requestId String @db.Uuid
+  requestHash String
+  lastRequestId String? @db.Uuid
+  lastRequestHash String?
+  retentionUntil DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([ownerId,requestId])
+  @@index([ownerId,updatedAt])
+  @@index([retentionUntil])
 }

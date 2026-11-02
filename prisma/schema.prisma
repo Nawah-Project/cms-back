@@ -154,6 +154,9 @@ model User {
   adminPermissionActions     AdminPermissionAudit[]       @relation("AdminPermissionActor")
   adminPermissionChanges     AdminPermissionAudit[]       @relation("AdminPermissionTarget")
 
+  consultingCases CareerConsultingCase[] @relation("ConsultingParticipant")
+  ownedConsultingCases CareerConsultingCase[] @relation("ConsultingOwner")
+
   researchCases      IndividualResearchCase[]   @relation("ResearchParticipant")
   ownedResearchCases IndividualResearchCase[]   @relation("ResearchOwner")
   researchOverrides  IndividualAccessOverride[] @relation("ResearchOverrideUser")
@@ -908,4 +911,195 @@ model IndividualCaseEvent {
   @@unique([caseId, requestId])
   @@index([caseId, createdAt])
   @@map("individual_case_events")
+}
+
+// Career service data is separate from research consent and programme progress.
+model CareerConsultingCase {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  user User @relation("ConsultingParticipant",fields:[userId],references:[id],onDelete:Cascade)
+  ownerId String @db.Uuid
+  owner User @relation("ConsultingOwner",fields:[ownerId],references:[id],onDelete:Restrict)
+  allowedAdminIds String[] @default([]) @db.Uuid
+  title String @db.VarChar(160)
+  purpose String @db.VarChar(3000)
+  status String @default("DRAFT") @db.VarChar(20)
+  consentStatus String @default("NOT_ACCEPTED") @db.VarChar(20)
+  consentAt DateTime?
+  consentVersion String? @db.VarChar(60)
+  withdrawnAt DateTime?
+  retentionUntil DateTime
+  programmeSharing Boolean @default(false)
+  revision Int @default(1)
+  requestId String @unique @db.Uuid
+  requestHash String @db.VarChar(64)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  responseDrafts CareerConsultingResponseDraft[]
+  items CareerConsultingItem[]
+  publications CareerConsultingPublication[]
+  submissions CareerConsultingSubmission[]
+  reviews CareerConsultingReview[]
+  decisions CareerConsultingDecision[]
+  comments CareerConsultingComment[]
+  files CareerConsultingFile[]
+  events CareerConsultingEvent[]
+  @@index([userId,status])
+  @@index([ownerId,updatedAt])
+  @@index([retentionUntil])
+  @@map("career_consulting_cases")
+}
+model CareerConsultingItem {
+  id String @id @default(uuid()) @db.Uuid
+  caseId String @db.Uuid
+  case CareerConsultingCase @relation(fields:[caseId],references:[id],onDelete:Cascade)
+  kind String @db.VarChar(30)
+  title String @db.VarChar(160)
+  draft Json @default("{}")
+  privateNotes String @default("") @db.Text
+  revision Int @default(1)
+  archived Boolean @default(false)
+  createdBy String @db.Uuid
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  publications CareerConsultingPublication[]
+  submissions CareerConsultingSubmission[]
+  @@index([caseId,kind,createdAt])
+  @@map("career_consulting_items")
+}
+model CareerConsultingPublication {
+  id String @id @default(uuid()) @db.Uuid
+  caseId String @db.Uuid
+  case CareerConsultingCase @relation(fields:[caseId],references:[id],onDelete:Cascade)
+  itemId String @db.Uuid
+  item CareerConsultingItem @relation(fields:[itemId],references:[id],onDelete:Cascade)
+  kind String @db.VarChar(30)
+  revision Int
+  content Json
+  publishedBy String @db.Uuid
+  createdAt DateTime @default(now())
+  responseDrafts CareerConsultingResponseDraft[]
+  submissions CareerConsultingSubmission[]
+  decisions CareerConsultingDecision[]
+  @@unique([itemId,revision])
+  @@index([caseId,createdAt])
+  @@map("career_consulting_publications")
+}
+model CareerConsultingSubmission {
+  id String @id @default(uuid()) @db.Uuid
+  caseId String @db.Uuid
+  case CareerConsultingCase @relation(fields:[caseId],references:[id],onDelete:Cascade)
+  activityId String @db.Uuid
+  activity CareerConsultingItem @relation(fields:[activityId],references:[id],onDelete:Cascade)
+  publicationId String @db.Uuid
+  publication CareerConsultingPublication @relation(fields:[publicationId],references:[id],onDelete:Cascade)
+  version Int
+  answers Json
+  fileIds String[] @default([]) @db.Uuid
+  createdBy String @db.Uuid
+  createdAt DateTime @default(now())
+  review CareerConsultingReview?
+  @@unique([activityId,version])
+  @@index([caseId,createdAt])
+  @@map("career_consulting_submissions")
+}
+model CareerConsultingReview {
+  id String @id @default(uuid()) @db.Uuid
+  caseId String @db.Uuid
+  case CareerConsultingCase @relation(fields:[caseId],references:[id],onDelete:Cascade)
+  submissionId String @unique @db.Uuid
+  submission CareerConsultingSubmission @relation(fields:[submissionId],references:[id],onDelete:Cascade)
+  body String @db.Text
+  nextStep String @default("") @db.Text
+  revision Int @default(1)
+  createdBy String @db.Uuid
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([caseId,createdAt])
+  @@map("career_consulting_reviews")
+}
+model CareerConsultingDecision {
+  id String @id @default(uuid()) @db.Uuid
+  caseId String @db.Uuid
+  case CareerConsultingCase @relation(fields:[caseId],references:[id],onDelete:Cascade)
+  publicationId String @db.Uuid
+  publication CareerConsultingPublication @relation(fields:[publicationId],references:[id],onDelete:Cascade)
+  choice String @db.VarChar(30)
+  body String @default("") @db.Text
+  createdBy String @db.Uuid
+  createdAt DateTime @default(now())
+  @@index([caseId,createdAt])
+  @@map("career_consulting_decisions")
+}
+model CareerConsultingComment {
+  id String @id @default(uuid()) @db.Uuid
+  caseId String @db.Uuid
+  case CareerConsultingCase @relation(fields:[caseId],references:[id],onDelete:Cascade)
+  targetId String? @db.Uuid
+  targetKind String @default("CASE") @db.VarChar(30)
+  body String @db.Text
+  private Boolean @default(false)
+  authorRole String @db.VarChar(20)
+  createdBy String @db.Uuid
+  createdAt DateTime @default(now())
+  @@index([caseId,createdAt])
+  @@map("career_consulting_comments")
+}
+model CareerConsultingFile {
+  id String @id @default(uuid()) @db.Uuid
+  caseId String @db.Uuid
+  case CareerConsultingCase @relation(fields:[caseId],references:[id],onDelete:Cascade)
+  originalName String @db.VarChar(255)
+  storageKey String @unique @db.VarChar(120)
+  size Int
+  sha256 String @db.VarChar(64)
+  shared Boolean @default(false)
+  createdBy String @db.Uuid
+  createdAt DateTime @default(now())
+  @@index([caseId,createdAt])
+  @@map("career_consulting_files")
+}
+model CareerConsultingEvent {
+  id String @id @default(uuid()) @db.Uuid
+  caseId String @db.Uuid
+  case CareerConsultingCase @relation(fields:[caseId],references:[id],onDelete:Cascade)
+  actorId String @db.Uuid
+  action String @db.VarChar(60)
+  entityId String? @db.Uuid
+  requestId String? @db.Uuid
+  requestHash String? @db.VarChar(64)
+  metadata Json @default("{}")
+  createdAt DateTime @default(now())
+  @@unique([caseId,requestId])
+  @@index([caseId,createdAt])
+  @@map("career_consulting_events")
+}
+
+model CareerConsultingResponseDraft {
+  id String @id @default(uuid()) @db.Uuid
+  caseId String @db.Uuid
+  case CareerConsultingCase @relation(fields:[caseId],references:[id],onDelete:Cascade)
+  publicationId String @db.Uuid
+  publication CareerConsultingPublication @relation(fields:[publicationId],references:[id],onDelete:Cascade)
+  createdBy String @db.Uuid
+  answers Json @default("{}")
+  fileIds String[] @default([]) @db.Uuid
+  revision Int @default(1)
+  lastSubmittedAt DateTime?
+  updatedAt DateTime @updatedAt
+  @@unique([publicationId,createdBy])
+  @@index([caseId])
+  @@map("career_consulting_response_drafts")
+}
+
+// Independent queue: the previous API image ignores these jobs and cannot delete new files.
+model CareerConsultingFileDeletion {
+  id String @id @default(uuid()) @db.Uuid
+  storageKey String @unique @db.VarChar(120)
+  attempts Int @default(0)
+  lastError String? @db.VarChar(60)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([attempts,createdAt])
+  @@map("career_consulting_file_deletions")
 }

@@ -4,11 +4,11 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
-} from "@nestjs/common";
-import { Prisma } from "@prisma/client";
-import { PrismaService } from "../prisma/prisma.service";
-import { AccountCvCleanupService, CV_KEY } from "./account-cv-cleanup.service";
-import { DeleteUserDto } from "./dto/delete-user.dto";
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+import { AccountCvCleanupService, CV_KEY } from './account-cv-cleanup.service';
+import { DeleteUserDto } from './dto/delete-user.dto';
 @Injectable()
 export class AccountDeletionService {
   constructor(
@@ -19,10 +19,10 @@ export class AccountDeletionService {
     actorId: string,
     user: { id: string; role: string } | null,
   ) {
-    if (!user) throw new NotFoundException("Account no longer exists");
-    if (user.id === actorId || user.role !== "USER")
+    if (!user) throw new NotFoundException('Account no longer exists');
+    if (user.id === actorId || user.role !== 'USER')
       throw new ForbiddenException(
-        "Only member accounts can be permanently deleted",
+        'Only member accounts can be permanently deleted',
       );
   }
   async preview(actorId: string, userId: string) {
@@ -37,6 +37,7 @@ export class AccountDeletionService {
         cvHistory: { select: { storageKey: true } },
         _count: {
           select: {
+            consultingCases: true,
             applications: true,
             assignedTasks: true,
             sideTaskSubmissions: true,
@@ -47,12 +48,16 @@ export class AccountDeletionService {
       },
     });
     this.assertAllowed(actorId, user);
+    const consultingFiles = await this.prisma.careerConsultingFile.count({
+      where: { case: { userId } },
+    });
     return {
       id: user!.id,
       name: user!.name,
       email: user!.email,
       counts: {
         ...user!._count,
+        consultingFiles,
         cvVersions: new Set(
           [
             user!.cv?.storageKey,
@@ -64,11 +69,12 @@ export class AccountDeletionService {
   }
   async delete(actorId: string, userId: string, dto: DeleteUserDto) {
     // Defend service callers as well as the request DTO.
-    if (dto.confirmation !== "DELETE_PERMANENTLY")
+    if (dto.confirmation !== 'DELETE_PERMANENTLY')
       throw new BadRequestException(
-        "Permanent deletion confirmation is required",
+        'Permanent deletion confirmation is required',
       );
     let keys: string[] = [];
+    let consultingFilesPending = 0;
     for (let attempt = 0; ; attempt++) {
       try {
         keys = await this.prisma.$transaction(
@@ -88,7 +94,7 @@ export class AccountDeletionService {
             this.assertAllowed(actorId, user);
             if (dto.email.trim().toLowerCase() !== user!.email.toLowerCase())
               throw new BadRequestException(
-                "Confirmation email does not match this account",
+                'Confirmation email does not match this account',
               );
             const files = [
               ...new Set(
@@ -100,8 +106,21 @@ export class AccountDeletionService {
             ];
             if (files.some((k) => !CV_KEY.test(k)))
               throw new ConflictException(
-                "A private CV reference needs review before deletion",
+                'A private CV reference needs review before deletion',
               );
+            // Queue consultation files independently before the member cascade.
+            // The old CV cleaner deliberately cannot unlink this namespace.
+            const consultationFiles = await tx.careerConsultingFile.findMany({
+              where: { case: { userId } },
+              select: { storageKey: true },
+            });
+            if (consultationFiles.length) {
+              await tx.careerConsultingFileDeletion.createMany({
+                data: consultationFiles,
+                skipDuplicates: true,
+              });
+              consultingFilesPending = consultationFiles.length;
+            }
             // Remove restrictions and non-relational identity traces before cascading the account.
             await tx.feedbackPost.deleteMany({
               where: { OR: [{ targetUserId: userId }, { authorId: userId }] },
@@ -116,7 +135,7 @@ export class AccountDeletionService {
                   {
                     recipientEmail: {
                       equals: user!.email,
-                      mode: "insensitive",
+                      mode: 'insensitive',
                     },
                   },
                 ],
@@ -148,7 +167,7 @@ export class AccountDeletionService {
         );
         break;
       } catch (error) {
-        if ((error as { code?: string }).code !== "P2034" || attempt >= 3)
+        if ((error as { code?: string }).code !== 'P2034' || attempt >= 3)
           throw error;
       }
     }
@@ -158,6 +177,6 @@ export class AccountDeletionService {
           where: { storageKey: { in: keys } },
         })
       : 0;
-    return { deleted: true, cvFilesPending };
+    return { deleted: true, cvFilesPending, consultingFilesPending };
   }
 }

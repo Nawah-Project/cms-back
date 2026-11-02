@@ -152,13 +152,14 @@ def inventory(stack):
         quoted = '"' + table.replace('"', '""') + '"'
         counts[table] = int(stack.sql(f'SELECT count(*) FROM public.{quoted};'))
     references = {}
-    for table in ('user_cvs', 'user_cv_history'):
+    for table in ('user_cvs', 'user_cv_history', 'career_consulting_files'):
         if table not in counts:
             continue
         rows = json.loads(stack.sql(f'SELECT coalesce(json_agg(json_build_object(\'key\',"storageKey",\'size\',size)),\'[]\') FROM "{table}";'))
         for row in rows:
             key = row['key']
-            if not re.fullmatch(r'[0-9a-fA-F-]{36}\.pdf', key):
+            pattern = (r'career-consulting/[0-9a-fA-F-]{36}\.pdf' if table == 'career_consulting_files' else r'[0-9a-fA-F-]{36}\.pdf')
+            if not re.fullmatch(pattern, key):
                 raise BackupError('Unsupported CV storage key; explicit manual review is required')
             if key in references and references[key] != row['size']:
                 raise BackupError('Current/history CV size metadata disagrees')
@@ -167,6 +168,8 @@ def inventory(stack):
     for table in ('user_cvs', 'user_cv_history', 'applications', 'side_task_submissions', 'user_journey_states'):
         if table in counts and 'users' in counts:
             relationships[table] = int(stack.sql(f'SELECT count(*) FROM "{table}" t JOIN users u ON u.id=t."userId";'))
+    if 'career_consulting_files' in counts:
+        relationships['career_consulting_files'] = int(stack.sql('SELECT count(*) FROM career_consulting_files f JOIN career_consulting_cases c ON c.id=f.\"caseId\" JOIN users u ON u.id=c.\"userId\";'))
     return {'table_counts': counts, 'cv_references': references, 'user_relationship_counts': relationships}
 
 

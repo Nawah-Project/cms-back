@@ -89,6 +89,8 @@ CREATE TABLE applications (id uuid PRIMARY KEY, "userId" uuid REFERENCES users(i
 CREATE TABLE side_task_submissions (id uuid PRIMARY KEY, "userId" uuid REFERENCES users(id), "reviewSummary" text);
 CREATE TABLE user_journey_states ("userId" uuid PRIMARY KEY REFERENCES users(id), "currentNodeCode" text, "cvVersionNumber" integer);
 CREATE TABLE journey_nodes (code text PRIMARY KEY, "requiredAppsCount" integer);
+CREATE TABLE career_consulting_cases (id uuid PRIMARY KEY, "userId" uuid REFERENCES users(id));
+CREATE TABLE career_consulting_files (id uuid PRIMARY KEY, "caseId" uuid REFERENCES career_consulting_cases(id), "storageKey" text UNIQUE, size integer);
 ''')
         cls.sql(cls.source, f'''INSERT INTO users VALUES ('{user}', 'Synthetic participant');
 INSERT INTO applications VALUES ('{uuid.uuid4()}', '{user}', 'Synthetic employer');
@@ -99,6 +101,14 @@ INSERT INTO journey_nodes VALUES ('W1_M1', 11);''')
             cls.sql(cls.source, f'''INSERT INTO user_cv_history VALUES ('{uuid.uuid4()}', '{user}', {4 if index == 0 else 9}, '{key}', {len(payload)});''')
             cls.write_cv(cls.source, key, payload)
         cls.sql(cls.source, f'''INSERT INTO user_cvs VALUES ('{uuid.uuid4()}', '{user}', '{cls.keys[1]}', {len(cls.payloads[1])});''')
+        consultation = str(uuid.uuid4())
+        key = 'career-consulting/' + str(uuid.uuid4()) + '.pdf'
+        payload = b'%PDF-1.7\nsynthetic private consultation work\n'
+        cls.sql(cls.source, f'INSERT INTO career_consulting_cases VALUES (\'{consultation}\',\'{user}\');')
+        cls.sql(cls.source, f'INSERT INTO career_consulting_files VALUES (\'{uuid.uuid4()}\',\'{consultation}\',\'{key}\',{len(payload)});')
+        cls.keys.append(key)
+        cls.payloads.append(payload)
+        cls.write_cv(cls.source, key, payload)
         cls.before = cls.snapshot(cls.source)
         result = cls.cli('backup', *cls.options(cls.source), '--output-dir', str(cls.root / 'backups'), '--confirm-quiesced')
         if result.returncode:
@@ -129,16 +139,16 @@ INSERT INTO journey_nodes VALUES ('W1_M1', 11);''')
         command(['docker', 'run', '--rm', '-i', '--pull', 'never', '--network', 'none',
                  '--mount', f'type=volume,src={cls.volume(project)},dst=/cv',
                  '--entrypoint', 'sh', IMAGE, '-ceu',
-                 'cat > "/cv/$1"; chown 1000:1000 "/cv/$1"; chmod 600 "/cv/$1"', '--', key], payload)
+                 'mkdir -p "$(dirname "/cv/$1")"; cat > "/cv/$1"; chown 1000:1000 "/cv/$1"; chmod 600 "/cv/$1"', '--', key], payload)
 
     @classmethod
     def snapshot(cls, project):
         tables = ['users', 'applications', 'user_cvs', 'user_cv_history',
-                  'side_task_submissions', 'user_journey_states', 'journey_nodes']
+                  'side_task_submissions', 'user_journey_states', 'journey_nodes', 'career_consulting_cases', 'career_consulting_files']
         rows = {t: json.loads(cls.sql(project, f'SELECT coalesce(json_agg(t),\'[]\') FROM "{t}" t;')) for t in tables}
         hashes = command(['docker', 'run', '--rm', '--pull', 'never', '--network', 'none',
                           '--mount', f'type=volume,src={cls.volume(project)},dst=/cv,readonly',
-                          '--entrypoint', 'sh', IMAGE, '-ceu', 'sha256sum /cv/*.pdf']).decode()
+                          '--entrypoint', 'sh', IMAGE, '-ceu', 'sha256sum /cv/*.pdf /cv/career-consulting/*.pdf']).decode()
         return rows, hashes
 
     @classmethod

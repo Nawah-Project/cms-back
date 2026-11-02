@@ -68,10 +68,39 @@ export class OperationsPolicyService {
           count++;
         } catch {}
       }
+    const cvBytes = bytes,
+      cvFiles = count;
+    let consultingBytes = 0,
+      consultingFiles = 0;
+    try {
+      for (const file of await readdir(
+        join(CV_STORAGE_DIR, 'career-consulting'),
+        { withFileTypes: true },
+      )) {
+        if (!file.isFile() || !/^[a-f\d-]{36}\.pdf$/i.test(file.name)) continue;
+        try {
+          const info = await stat(
+            join(CV_STORAGE_DIR, 'career-consulting', file.name),
+          );
+          consultingBytes += info.size;
+          consultingFiles++;
+        } catch {
+          /* A cleanup may finish during sampling. */
+        }
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    bytes += consultingBytes;
+    count += consultingFiles;
     const disk = await statfs(CV_STORAGE_DIR);
     return {
       bytes,
       files: count,
+      cvBytes,
+      cvFiles,
+      consultingBytes,
+      consultingFiles,
       diskAvailableBytes: disk.bavail * disk.bsize,
       diskTotalBytes: disk.blocks * disk.bsize,
     };
@@ -105,6 +134,34 @@ export class OperationsPolicyService {
             'مساحة القرص المتاحة أقل من حد الأمان. يرجى التواصل مع الإدارة.',
           );
         return operation(db);
+      },
+      { maxWait: 15000, timeout: 30000 },
+    );
+  }
+  async withPrivateDocumentBudget<T>(
+    bytes: number,
+    operation: (
+      db: Prisma.TransactionClient,
+      reserve: () => Promise<void>,
+    ) => Promise<T>,
+  ): Promise<T> {
+    return this.prisma.$transaction(
+      async (db) => {
+        await db.$queryRaw`SELECT pg_advisory_xact_lock(${BigInt(CV_BUDGET_LOCK)}) IS NULL AS locked`;
+        const reserve = async () => {
+          const settings = await this.settings(db),
+            usage = await this.storage();
+          if (usage.bytes + bytes > settings.cvQuotaMiB * 1048576)
+            throw new ForbiddenException(
+              'Private document storage quota reached',
+            );
+          if (
+            usage.diskAvailableBytes - bytes <
+            settings.diskReserveMiB * 1048576
+          )
+            throw new ForbiddenException('Disk reserve would be exceeded');
+        };
+        return operation(db, reserve);
       },
       { maxWait: 15000, timeout: 30000 },
     );

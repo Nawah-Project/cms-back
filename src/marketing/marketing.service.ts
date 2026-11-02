@@ -50,6 +50,8 @@ export class MarketingService {
       return { accepted: false };
     }
     const path = body.path.startsWith('/') ? body.path.split('?')[0] : '/';
+    if (/^\/(?:admin|career-consulting)(?:\/|$)/i.test(path))
+      return { accepted: false };
     await this.prisma.marketingEvent.create({
       data: {
         visitorId: body.visitorId,
@@ -75,6 +77,8 @@ export class MarketingService {
     userId: string,
     context: RequestContext,
   ) {
+    if (/^\/(?:admin|career-consulting)(?:[/?#]|$)/i.test(body.path))
+      return { accepted: false };
     if (
       /bot|crawler|spider|headless|lighthouse|preview/i.test(context.userAgent)
     )

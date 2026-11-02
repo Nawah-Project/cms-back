@@ -11,6 +11,7 @@ export const ADMIN_SECTIONS = [
   'REPORTS',
   'UX_LAB',
   'INDIVIDUAL_RESEARCH',
+  'CAREER_CONSULTING',
   'MARKETING',
   'OPERATIONS',
 ] as const;

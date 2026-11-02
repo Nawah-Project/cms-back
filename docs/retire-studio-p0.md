@@ -1,0 +1,11 @@
+# Retire Individual Experience Studio P0 — 2026-11-02
+
+The user explicitly chose to remove P0 additions while keeping the pre-existing UX Lab. Career Consulting, its member experience, practice guide, activity reference, private roadmaps and all stored consulting data remain intact.
+
+Removed: Studio controllers/services, admin page and permissions, profile/onboarding participation panel, Mentoring/UX Lab cross-links, exceptional feature/guidance/report access and seed/browser scripts for the retired feature. Shared Journey, report, task and guidance behaviour is restored from the exact P0 diff, not by reverting a later release. Runtime security patches, hosted deployment infrastructure and later consulting work are preserved.
+
+Old research models, migrations and rows remain for preservation. No migration, reset, seed, schema drop, consent mutation, participant conversion or permission update is performed. Historical permission keys are ignored by the active permission normalizer. Historical active override rows cannot affect programme gates because no running service reads them. Production metadata audit found no ACTIVE/GIVEN case and no ACTIVE override at retirement. Previously published ordinary tasks or feedback are not deleted.
+
+The old Studio runtime, including its automatic retention worker, is removed. Existing archives remain private in PostgreSQL and existing backups. This task adds no archive deletion job; archive retention/disposal requires a separate data-management decision before recorded deadlines. This does not alter active Career Consulting retention workers or deadlines. Restoring an older P0 image would also restore its controllers, grant engine and cleanup behaviour, so application rollback must consider this explicitly; stored records have not been edited to fake withdrawal or deletion.
+
+Acceptance: retired endpoints return 404 for every actor; old grant rows are ignored by Journey/reports/tasks/guidance; normal unlocks still work; UX Lab remains; consulting and maps work with existing records. Integration tests use disposable cms_test only. Production deployment uses hosted CI images and the existing approval agent, with a fresh verified backup and data fingerprint/CV checks.

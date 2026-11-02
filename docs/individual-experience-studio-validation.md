@@ -1,3 +1,5 @@
+> Historical documentation: Studio P0 was retired on 2026-11-02. These endpoints and grants are no longer available. See [retirement notes](retire-studio-p0.md).
+
 # P0 — سجل التحقق الفعلي
 
 تاريخ الفحص: 1 نوفمبر 2026، على worktrees مستقلة للفرونت والباك، بفرع `feature/individual-experience-studio-20261101`. لم يُستخدم أي حساب حقيقي أو نسخة من بيانات الإنتاج.

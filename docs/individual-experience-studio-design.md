@@ -1,3 +1,5 @@
+> Historical documentation: Studio P0 was retired on 2026-11-02. These endpoints and grants are no longer available. See [retirement notes](retire-studio-p0.md).
+
 # Individual Experience Studio — تشخيص وقرار P0
 
 ## خط الأساس (1 نوفمبر 2026)

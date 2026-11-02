@@ -1,6 +1,4 @@
 import { CareerConsultingModule } from './career-consulting/consulting.module';
-import { IndividualAccessModule } from './individual-research/individual-access.module';
-import { IndividualResearchModule } from './individual-research/individual-research.module';
 import { OperationsModule } from './operations/operations.module';
 import { UxLabModule } from './ux-lab/ux-lab.module';
 import { Module } from '@nestjs/common';
@@ -27,8 +25,6 @@ import { MarketingModule } from './marketing/marketing.module';
 @Module({
   imports: [
     CareerConsultingModule,
-    IndividualAccessModule,
-    IndividualResearchModule,
     OperationsModule,
     ExperienceModule,
     UxLabModule,

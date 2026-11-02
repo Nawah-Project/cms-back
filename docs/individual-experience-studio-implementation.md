@@ -1,3 +1,5 @@
+> Historical documentation: Studio P0 was retired on 2026-11-02. These endpoints and grants are no longer available. See [retirement notes](retire-studio-p0.md).
+
 # Individual Experience Studio — تسليم P0
 
 هذا التنفيذ على الفرع `feature/individual-experience-studio-20261101` في المستودعين. لم يُنشر، ولم تُطبّق أي migration على الإنتاج. توثيق التشخيص السابق للتنفيذ: [قرار التصميم](individual-experience-studio-design.md).

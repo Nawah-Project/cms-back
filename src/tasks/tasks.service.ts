@@ -1,9 +1,7 @@
-import { IndividualAccessService, AccessPermission } from '../individual-research/individual-access.service';
 import {
   BadRequestException,
   ForbiddenException,
   Injectable,
-  Optional,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -52,7 +50,7 @@ const taskInclude = {
 
 @Injectable()
 export class TasksService {
-  constructor(private readonly prisma: PrismaService, @Optional() private readonly individualAccess?: IndividualAccessService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   private async assertTaskForUser(taskId: string, userId: string) {
     const task = await this.prisma.task.findFirst({
@@ -72,7 +70,7 @@ export class TasksService {
     return task;
   }
 
-  async assertProfDevUnlocked(userId: string, permission: AccessPermission = 'INTERACT'): Promise<void> {
+  async assertProfDevUnlocked(userId: string): Promise<void> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -91,7 +89,7 @@ export class TasksService {
     if (user.role === UserRole.ADMIN) return;
     const js = user.journeyState;
     const isUnlocked = professionalTasksUnlocked(js?.currentWeek ?? 0, js?.readInsightCodes ?? []);
-    if (!isUnlocked && !await this.individualAccess?.allows(userId,'FEATURE','professionalTasks',permission)) {
+    if (!isUnlocked) {
       throw new ForbiddenException(
         'Professional tasks unlock after reading the Week 3 time-management guidance',
       );
@@ -217,10 +215,9 @@ export class TasksService {
     userId: string,
     createdById: string,
     dto: CreateTaskDto,
-    transaction?: Prisma.TransactionClient,
   ) {
     this.validateDates(dto.startDate, dto.dueDate);
-    const create = async (tx: Prisma.TransactionClient) => {
+    const task = await this.prisma.$transaction(async (tx) => {
       const member = await tx.user.findUnique({
         where: { id: userId },
         select: { id: true, role: true },
@@ -249,8 +246,7 @@ export class TasksService {
         },
         include: taskInclude,
       });
-    };
-    const task = transaction ? await create(transaction) : await this.prisma.$transaction(create);
+    });
     return this.present(task);
   }
 

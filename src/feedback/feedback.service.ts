@@ -1,4 +1,3 @@
-import { IndividualAccessService } from '../individual-research/individual-access.service';
 import {
   BadRequestException,
   ForbiddenException,
@@ -55,7 +54,6 @@ export class FeedbackService implements OnApplicationBootstrap {
     private readonly prisma: PrismaService,
     private readonly emailSender: EmailSenderService,
     @Optional() private readonly eventEmitter?: EventEmitter2,
-    @Optional() private readonly individualAccess?: IndividualAccessService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -215,14 +213,14 @@ export class FeedbackService implements OnApplicationBootstrap {
     };
   }
 
-  async create(authorId: string, dto: CreateFeedbackDto, transaction?: Prisma.TransactionClient) {
+  async create(authorId: string, dto: CreateFeedbackDto) {
     const author = await this.prisma.user.findFirst({
       where: { id: authorId, role: UserRole.ADMIN },
       select: { id: true },
     });
     if (!author) throw new ForbiddenException('Administrator access required');
     const data = await this.buildData(authorId, dto);
-    const create = async (tx: Prisma.TransactionClient) => {
+    const post = await this.prisma.$transaction(async (tx) => {
       const created = await tx.feedbackPost.create({
         data: {
           authorId: data.authorId,
@@ -242,10 +240,9 @@ export class FeedbackService implements OnApplicationBootstrap {
         where: { id: created.id },
         include: feedbackInclude,
       });
-    };
-    const post = transaction ? await create(transaction) : await this.prisma.$transaction(create);
+    });
 
-    if (!transaction && dto.sendEmailNotification) {
+    if (dto.sendEmailNotification) {
       if (data.targetUserId) {
         try {
           const target = await this.prisma.user.findUnique({
@@ -374,9 +371,7 @@ export class FeedbackService implements OnApplicationBootstrap {
 
   private async unlockedWhere(userId: string): Promise<Prisma.FeedbackPostWhereInput> {
     const state = await this.prisma.userJourneyState.findUnique({ where: { userId } });
-    const grants=await this.individualAccess?.grants(userId)??[];
-    const extra=grants.filter(g=>g.resourceType==='GUIDANCE').map(g=>g.resourceId);
-    return { OR: [{ unlockTriggerCode: null }, { unlockTriggerCode: { in: [...(state?.unlockedInsightCodes??[]),...extra] } }] };
+    return { OR: [{ unlockTriggerCode: null }, { unlockTriggerCode: { in: state?.unlockedInsightCodes ?? [] } }] };
   }
 
   async listForMember(userId: string, query: FeedbackQueryDto) {
@@ -446,7 +441,6 @@ export class FeedbackService implements OnApplicationBootstrap {
 
   async markRead(userId: string, id: string) {
     const post = await this.findAuthorized(userId, id);
-    if(post.unlockTriggerCode){const state=await this.prisma.userJourneyState.findUnique({where:{userId}});if(!(state?.unlockedInsightCodes??[]).includes(post.unlockTriggerCode)&&!await this.individualAccess?.allows(userId,'GUIDANCE',post.unlockTriggerCode,'INTERACT'))throw new ForbiddenException('This individual guidance access is view-only');}
     if (post.unlockTriggerCode === CV_FOUNDATION_CODE) {
       const [state, latest] = await Promise.all([this.prisma.userJourneyState.findUnique({where:{userId}}),this.prisma.userCvHistory.findFirst({where:{userId},orderBy:{versionNumber:'desc'},select:{versionNumber:true,uploadedAt:true}})]);
       if (!state || !cvFoundationStatus(state, latest ? [latest] : []).canComplete) throw new BadRequestException('Upload your revised CV before confirming this guidance');

@@ -13,7 +13,7 @@ PostgreSQL logical snapshots alone do not snapshot the CV filesystem. Do **not**
 1. Arrange an approved maintenance window and maintenance messaging. Prevent new application requests, deployments, external SQL writers/imports, and workers from writing.
 2. An authorized operator separately stops **all API writers**, including replicas. This also stops the in-process no-response processor and CV orphan timer. This tool never stops or restarts services for you.
 3. Run the backup with `--confirm-quiesced` only after all other writers are stopped. The tool independently checks that all existing Compose API containers are stopped, both before and after capture. Container configuration is retained so it can discover the CV mount. A removed API container is insufficient; the container must still exist.
-4. The tool captures a custom-format `pg_dump`, all CV files including referenced historical versions, table counts, current/history file references, representative user relationship counts, and per-file SHA-256 checksums. It rechecks database inventory and CV references before marking the set complete.
+4. The tool captures a custom-format `pg_dump`, all CV files including referenced historical versions, table counts, current/history CV and consultation-document references, representative user relationship counts, and per-file SHA-256 checksums. It rechecks database inventory and CV references before marking the set complete.
 5. An authorized operator may resume normal operation after a successful backup, or after reviewing a failure. There is no automatic service restart.
 
 The stopped-writer requirement is the consistency mechanism. Rechecking counts cannot detect every possible external SQL/content change. If independent writers cannot be quiesced, **do not acknowledge the flag**: schedule downtime or design a separately approved snapshot/locking procedure. No such live-writer guarantee is claimed by this tool.
@@ -60,7 +60,7 @@ NAWAH_BACKUP_SET=/absolute/path/to/one/completed/backup
 python3 scripts/backup/backup.py verify "$NAWAH_BACKUP_SET"
 ```
 
-Verification checks the dump/tar SHA-256, a readable custom dump TOC using `pg_restore --list`, every archived CV hash, and that each DB-referenced current/history CV exists with the recorded size. The same PostgreSQL image must be available locally; use `--helper-image` for a compatible locally available image when verifying on another host. A TOC/checksum check is **not** a substitute for executing a restore.
+Verification checks the dump/tar SHA-256, a readable custom dump TOC using `pg_restore --list`, every archived CV hash, and that each DB-referenced current/history CV or consultation document exists with the recorded size. The same PostgreSQL image must be available locally; use `--helper-image` for a compatible locally available image when verifying on another host. A TOC/checksum check is **not** a substitute for executing a restore.
 
 Transfer the **complete directory** to approved off-host storage over SSH, for example:
 
@@ -144,3 +144,5 @@ Journey integration tests are separate: see `test/jest-phase1.json`. They requir
 ## Historical repairs are separate maintenance
 
 Removing startup cleanup prevents future loss; it cannot reconstruct deleted records or restore overwritten administrator configuration. Do not infer corruption from ordinary Arabic/English words, do not renumber CV versions by `count(history)`, and do not automatically reset existing nodes to seed defaults. Recovery from an older backup or any historical repair needs explicit record-level evidence, a verified backup, an isolated rehearsal, and separate operator approval. No historical repair is run by these scripts.
+
+Career Consulting documents use the same private volume under `career-consulting/<uuid>.pdf`. Capture this subdirectory with the volume, retain private file permissions, and use the updated inventory so references from `career_consulting_files` are validated. The regression restore includes this namespace. Never point the old flat CV cleaner at this directory.

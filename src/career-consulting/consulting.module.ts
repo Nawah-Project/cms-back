@@ -1,3 +1,5 @@
+import { ConsultingRoadmapController } from './roadmap.controller';
+import { ConsultingRoadmapService } from './roadmap.service';
 import { ProfileModule } from '../profile/profile.module';
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
@@ -11,7 +13,16 @@ import {
 } from './consulting.controller';
 @Module({
   imports: [AuthModule, PrismaModule, ProfileModule],
-  controllers: [ConsultingAdminController, ConsultingMemberController],
-  providers: [CareerConsultingService, ConsultingFilesService, AdminGuard],
+  controllers: [
+    ConsultingAdminController,
+    ConsultingMemberController,
+    ConsultingRoadmapController,
+  ],
+  providers: [
+    CareerConsultingService,
+    ConsultingFilesService,
+    ConsultingRoadmapService,
+    AdminGuard,
+  ],
 })
 export class CareerConsultingModule {}

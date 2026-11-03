@@ -155,6 +155,7 @@ model User {
   adminPermissionChanges     AdminPermissionAudit[]       @relation("AdminPermissionTarget")
 
   founderWorkspaces FounderWorkspace[]
+  strategicRelationshipsWorkspaces StrategicRelationshipsWorkspace[]
   consultingRoadmaps CareerConsultingRoadmap[]
   consultingCases CareerConsultingCase[] @relation("ConsultingParticipant")
   ownedConsultingCases CareerConsultingCase[] @relation("ConsultingOwner")
@@ -1154,4 +1155,34 @@ model FounderWorkspaceMutation {
   workspace FounderWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   @@unique([workspaceId, requestId])
   @@map("founder_workspace_mutations")
+}
+
+// Owned by StrategicRelationshipsWorkspaceModule. No relation to Journey, CV, or consulting records.
+model StrategicRelationshipsWorkspace {
+  id              String   @id @default(uuid()) @db.Uuid
+  ownerId         String   @unique @map("owner_id") @db.Uuid
+  title           String   @db.VarChar(200)
+  document        Json
+  revision        Int      @default(0)
+  createRequestId String   @map("create_request_id") @db.Uuid
+  createHash      String   @map("create_hash") @db.VarChar(64)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  owner           User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  mutations       StrategicRelationshipsMutation[]
+  @@unique([ownerId, createRequestId])
+  @@index([ownerId, updatedAt])
+  @@map("strategic_relationship_workspaces")
+}
+
+model StrategicRelationshipsMutation {
+  id        String   @id @default(uuid()) @db.Uuid
+  workspaceId String @map("workspace_id") @db.Uuid
+  requestId String   @map("request_id") @db.Uuid
+  hash      String   @db.VarChar(64)
+  revision  Int
+  createdAt DateTime @default(now()) @map("created_at")
+  workspace StrategicRelationshipsWorkspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  @@unique([workspaceId, requestId])
+  @@map("strategic_relationship_mutations")
 }

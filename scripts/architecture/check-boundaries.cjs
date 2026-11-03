@@ -17,3 +17,13 @@ for (const file of walk(root).filter(f => f.endsWith('.ts') && !f.endsWith('.spe
   }
 }
 console.log('Founder workspace domain, data ownership, and incoming dependencies verified.');
+
+for(const file of walk(root).filter(f=>f.endsWith('.ts')&&!f.endsWith('.spec.ts'))){
+ const relative=path.relative(root,file),source=fs.readFileSync(file,'utf8');
+ if(relative.startsWith('strategic-relationships/')){
+  for(const match of source.matchAll(/from\s+['"]([^'"]+)['"]/g)){if(!match[1].startsWith('.'))continue;const target=path.relative(root,path.resolve(path.dirname(file),match[1]));assert.ok(target.startsWith('strategic-relationships/')||target.startsWith('platform/access/')||(relative.includes('/infrastructure/')&&target==='prisma/prisma.service'),`Forbidden relationships dependency: ${relative} -> ${target}`);}
+  if(relative.includes('/domain/'))assert.ok(!/Prisma|@nestjs|fetch\s*\(/.test(source),relative);
+  if(!relative.includes('/infrastructure/'))assert.ok(!/PrismaService|\$transaction|\.user\.(find|update)/.test(source),relative);
+ }else if(relative!=='app.module.ts'){assert.ok(!/from\s+['"][^'"]*strategic-relationships\//.test(source),relative);assert.ok(!/\.strategicRelationships(?:Workspace|Mutation)\./.test(source),relative);}
+}
+console.log('Strategic relationships data ownership and replaceable module boundary verified.');

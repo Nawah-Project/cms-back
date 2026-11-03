@@ -134,8 +134,17 @@ class Agent:
         repo = REPOS[component]
         path = '/releases/tags/' + tag if tag else '/releases/latest'
         if component == 'admin' and not tag:
-            releases = get_json(f'https://api.github.com/repos/{repo}/releases?per_page=20')
-            release = next((r for r in releases if not r['draft'] and not r['prerelease'] and r['tag_name'].startswith('build-admin-')), None)
+            # GitHub's list may put older/non-latest releases before newer ones.
+            # Scan every page, then select by publication time rather than list position.
+            releases = []
+            page = 1
+            while True:
+                batch = get_json(f'https://api.github.com/repos/{repo}/releases?per_page=100&page={page}')
+                releases.extend(batch)
+                if len(batch) < 100: break
+                page += 1
+            approved = [r for r in releases if not r['draft'] and not r['prerelease'] and r['tag_name'].startswith('build-admin-')]
+            release = max(approved, key=lambda r: (r['published_at'], r['tag_name']), default=None)
         else:
             release = get_json(f'https://api.github.com/repos/{repo}{path}', absent_ok=True)
         if release is None: return None

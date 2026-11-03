@@ -31,6 +31,8 @@ jobs:
       JWT_ACCESS_SECRET: ephemeral_ci_access_secret_not_production_123456
       JWT_REFRESH_SECRET: ephemeral_ci_refresh_secret_not_production_123456
       FRONTEND_ORIGIN: http://127.0.0.1:5174
+      UX_CONFIG_FILE: /tmp/nawah-ci-ux-config.json
+      CV_STORAGE_DIR: /tmp/nawah-ci-private-storage
       COOKIE_SECURE: 'false'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -40,6 +42,7 @@ jobs:
           cache: npm
       - run: npm ci --include=optional
       - run: npm run prisma:generate
+      - run: node scripts/architecture/check-boundaries.cjs
       - run: npm audit --omit=dev --audit-level=high
       - run: npm test -- --runInBand
       - run: npm run prisma:migrate:test

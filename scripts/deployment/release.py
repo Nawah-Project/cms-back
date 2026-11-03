@@ -13,8 +13,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-REPOS = {'frontend': 'Nawah-Project/cms-front', 'api': 'Nawah-Project/cms-back'}
-TAG = re.compile(r'build-([0-9a-f]{40})-([0-9]+)-([0-9]+)\Z')
+REPOS = {'frontend': 'Nawah-Project/cms-front', 'api': 'Nawah-Project/cms-back', 'admin': 'Nawah-Project/cms-front'}
+TAG = re.compile(r'build-(?:admin-)?([0-9a-f]{40})-([0-9]+)-([0-9]+)\Z')
 
 def now(): return datetime.now(timezone.utc).isoformat()
 def digest(path):
@@ -59,7 +59,7 @@ def prepare(args):
     assert repo == REPOS[args.component] and re.fullmatch('[0-9a-f]{40}', sha)
     assert os.environ['GITHUB_REF'] == 'refs/heads/main'
     run, attempt = os.environ['GITHUB_RUN_ID'], os.environ.get('GITHUB_RUN_ATTEMPT', '1')
-    tag = f'build-{sha}-{run}-{attempt}'
+    tag = f'build-{"admin-" if args.component == "admin" else ""}{sha}-{run}-{attempt}'
     assert TAG.fullmatch(tag)
     image = json.loads(subprocess.check_output(['docker', 'image', 'inspect', args.image]))[0]
     assert image['Architecture'] == 'amd64' and image['Os'] == 'linux'
@@ -97,7 +97,7 @@ def publish(args):
     try:
         artifacts = api(repo, f"/actions/runs/{m['runId']}/artifacts")
         for a in artifacts.get('artifacts', []):
-            if a['name'] == f"candidate-{m['commit']}": api(repo, f"/actions/artifacts/{a['id']}", 'DELETE')
+            if a['name'] == f"candidate-{m['component']}-{m['commit']}": api(repo, f"/actions/artifacts/{a['id']}", 'DELETE')
     except RuntimeError:
         print('Temporary artifact cleanup deferred to one-day retention.')
 
@@ -108,6 +108,9 @@ def approve(args):
     if not release or release['draft']: raise ValueError('Published candidate not found')
     m = asset_json(repo, release, 'release.json')
     assert m['repository'] == repo and m['tag'] == args.tag and m['schema'] == 1
+    assert m['component'] in REPOS and REPOS[m['component']] == repo
+    assert args.tag.startswith('build-admin-') == (m['component'] == 'admin'), 'Component tag mismatch'
+    if getattr(args, 'component', None): assert args.component == m['component'], 'Approval component mismatch'
     assert TAG.fullmatch(args.tag)[1] == m['commit'] and int(TAG.fullmatch(args.tag)[2]) == m['runId']
     run = api(repo, f"/actions/runs/{m['runId']}/attempts/{m['runAttempt']}")
     assert run['head_sha'] == m['commit'] and run['head_branch'] == 'main'
@@ -127,7 +130,7 @@ def approve(args):
             'actor': os.environ['GITHUB_ACTOR'], 'approvedAt': now()}
         out = Path(args.directory); out.mkdir(exist_ok=True, parents=True)
         write(out/'approval.json', approval); upload(repo, release['id'], out/'approval.json')
-    api(repo, f"/releases/{release['id']}", 'PATCH', {'prerelease': False, 'make_latest': 'true',
+    api(repo, f"/releases/{release['id']}", 'PATCH', {'prerelease': False, 'make_latest': 'false' if m['component'] == 'admin' else 'true',
         'name': f"Production {m['component']} {m['commit'][:12]}",
         'body': f"Approved by {os.environ['GITHUB_ACTOR']} at {now()}. Server checks every five minutes; download limited to 1 MiB/s.\n\n{args.tag}"})
     print('Existing candidate approved; no image rebuilt.')

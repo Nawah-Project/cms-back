@@ -16,8 +16,8 @@ import time
 import urllib.error
 import urllib.request
 
-REPOS = {'frontend': 'Nawah-Project/cms-front', 'api': 'Nawah-Project/cms-back'}
-TAG = re.compile(r'build-([0-9a-f]{40})-[0-9]+-[0-9]+\Z')
+REPOS = {'frontend': 'Nawah-Project/cms-front', 'api': 'Nawah-Project/cms-back', 'admin': 'Nawah-Project/cms-front'}
+TAG = re.compile(r'build-(?:admin-)?([0-9a-f]{40})-[0-9]+-[0-9]+\Z')
 HASH = re.compile(r'[0-9a-f]{64}\Z')
 
 class DeployError(Exception): pass
@@ -60,6 +60,7 @@ def asset(release, name, repo):
 def validate(repo, component, release, manifest, approval):
     match = TAG.fullmatch(release['tag_name'])
     if not match or release['draft']: raise PermanentError('Invalid candidate tag or draft')
+    if release['tag_name'].startswith('build-admin-') != (component == 'admin'): raise PermanentError('Component tag mismatch')
     if manifest.get('schema') != 1 or manifest.get('repository') != repo or manifest.get('component') != component:
         raise PermanentError('Release belongs to another repository or service')
     if manifest.get('tag') != release['tag_name'] or manifest.get('commit') != match[1]:
@@ -132,7 +133,11 @@ class Agent:
     def latest(self, component, tag=None):
         repo = REPOS[component]
         path = '/releases/tags/' + tag if tag else '/releases/latest'
-        release = get_json(f'https://api.github.com/repos/{repo}{path}', absent_ok=True)
+        if component == 'admin' and not tag:
+            releases = get_json(f'https://api.github.com/repos/{repo}/releases?per_page=20')
+            release = next((r for r in releases if not r['draft'] and not r['prerelease'] and r['tag_name'].startswith('build-admin-')), None)
+        else:
+            release = get_json(f'https://api.github.com/repos/{repo}{path}', absent_ok=True)
         if release is None: return None
         if not tag and release['prerelease']: raise PermanentError('Latest production release is a prerelease')
         ma = asset(release, 'release.json', repo); aa = asset(release, 'approval.json', repo) if not tag else None
@@ -244,7 +249,8 @@ class Agent:
         old_config = json.loads(command(self.compose(active,'config','--format','json')))
         new_config = json.loads(command(self.compose(proposed,'config','--format','json')))
         for config in [old_config,new_config]:
-            for name in ['api','frontend']: config['services'][name].pop('image',None)
+            for name in self.state['components']:
+                if name in config['services']: config['services'][name].pop('image',None)
         if old_config != new_config: raise PermanentError('Proposed deployment changes non-image settings')
         if component == 'api':
             pending = self.migration_check(m,approval)
@@ -294,7 +300,7 @@ class Agent:
             self.event('all','disabled_waiting_for_first_candidate');return
         if mode in ['poll','apply']: self.recover()
         elif self.state.get('pending'): raise DeployError('A previous interrupted deployment needs recovery before staging')
-        for name in ([component] if component else list(REPOS)):
+        for name in ([component] if component else [n for n in REPOS if n in self.config['containers']]):
             data=self.latest(name,tag)
             if not data: self.event(name,'no_approved_release');continue
             m=data[1]

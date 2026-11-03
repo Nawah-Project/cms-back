@@ -44,6 +44,17 @@ class ApprovalTests(unittest.TestCase):
         with patch.object(release,'api') as api:
             with self.assertRaises(ValueError):release.approve(self.args)
             api.assert_not_called()
+    def test_admin_approval_does_not_replace_the_member_latest_release(self):
+        self.args.tag='build-admin-'+SHA+'-123-1';self.args.component='admin'
+        self.manifest.update(component='admin',tag=self.args.tag)
+        with patch.object(release,'api',side_effect=self.api),patch.object(release,'asset_json',return_value=self.manifest),patch.object(release,'upload'):
+            release.approve(self.args)
+        self.assertTrue(any(method=='PATCH' and data['make_latest']=='false' for _,method,data in self.calls))
+    def test_admin_tag_cannot_be_approved_as_a_member_image(self):
+        self.args.tag='build-admin-'+SHA+'-123-1';self.manifest['tag']=self.args.tag
+        with patch.object(release,'api',side_effect=self.api),patch.object(release,'asset_json',return_value=self.manifest),patch.object(release,'upload') as upload:
+            with self.assertRaises(AssertionError):release.approve(self.args)
+            upload.assert_not_called()
     def test_api_schema_change_requires_explicit_compatibility_acknowledgment(self):
         os.environ['GITHUB_REPOSITORY']='Nawah-Project/cms-back'
         self.manifest.update(repository='Nawah-Project/cms-back',component='api',migrations={'new':'c'*64})

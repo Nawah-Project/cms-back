@@ -24,6 +24,21 @@ def candidate(component='frontend', sha=SHA, tag=TAG, content=b'complete compres
     return release,m,approval,archive
 
 class DeploymentTests(unittest.TestCase):
+    def test_admin_candidate_is_bound_to_its_component_and_tag(self):
+        tag='build-admin-'+SHA+'-12-1';d=candidate('admin',tag=tag)
+        agent.validate(agent.REPOS['admin'],'admin',*d[:3])
+        with self.assertRaises(agent.PermanentError):agent.validate(agent.REPOS['frontend'],'frontend',*d[:3])
+
+    def test_poll_ignores_components_that_are_not_installed_yet(self):
+        with patch.object(self.a,'latest',return_value=None) as latest:
+            self.a.run('poll')
+        self.assertEqual([c.args[0] for c in latest.call_args_list],['frontend','api'])
+
+    def test_admin_candidate_selection_ignores_prereleases_and_other_frontends(self):
+        admin_tag='build-admin-'+SHA+'-12-1'
+        rows=[{'tag_name':TAG,'draft':False,'prerelease':False},{'tag_name':admin_tag,'draft':False,'prerelease':True}]
+        with patch.object(agent,'get_json',return_value=rows):self.assertIsNone(self.a.latest('admin'))
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name)

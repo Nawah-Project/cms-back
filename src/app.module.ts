@@ -1,3 +1,4 @@
+import { FounderWorkspaceModule } from './founder-workspace/founder-workspace.module';
 import { CareerConsultingModule } from './career-consulting/consulting.module';
 import { OperationsModule } from './operations/operations.module';
 import { UxLabModule } from './ux-lab/ux-lab.module';
@@ -24,6 +25,7 @@ import { MarketingModule } from './marketing/marketing.module';
 
 @Module({
   imports: [
+    ...(process.env.FOUNDER_WORKSPACE_ENABLED === 'false' ? [] : [FounderWorkspaceModule]),
     CareerConsultingModule,
     OperationsModule,
     ExperienceModule,

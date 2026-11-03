@@ -39,6 +39,23 @@ class DeploymentTests(unittest.TestCase):
         rows=[{'tag_name':TAG,'draft':False,'prerelease':False},{'tag_name':admin_tag,'draft':False,'prerelease':True}]
         with patch.object(agent,'get_json',return_value=rows):self.assertIsNone(self.a.latest('admin'))
 
+    def test_admin_release_selection_does_not_trust_the_api_list_order(self):
+        old = {'tag_name': 'build-admin-' + 'b'*40 + '-10-1', 'draft': False, 'prerelease': False, 'published_at': '2026-11-03T09:00:00Z'}
+        new = {**old, 'tag_name': 'build-admin-' + 'c'*40 + '-20-1', 'published_at': '2026-11-03T18:00:00Z'}
+        unapproved = {**new, 'tag_name': 'build-admin-' + 'd'*40 + '-30-1', 'prerelease': True, 'published_at': '2026-11-04T18:00:00Z'}
+        with patch.object(agent, 'get_json', return_value=[old, unapproved, new]), patch.object(agent, 'asset', side_effect=LookupError('selection captured')) as asset:
+            with self.assertRaises(LookupError): self.a.latest('admin')
+        self.assertEqual(asset.call_args.args[0], new)
+        # Explicit staging still resolves the requested tag; it cannot affect the production selection.
+
+    def test_admin_release_selection_checks_later_pages(self):
+        unrelated = {'tag_name': TAG, 'draft': False, 'prerelease': False}
+        new = {'tag_name': 'build-admin-' + SHA + '-20-1', 'draft': False, 'prerelease': False, 'published_at': '2026-11-03T18:00:00Z'}
+        with patch.object(agent, 'get_json', side_effect=[[unrelated]*100, [new]]) as get, patch.object(agent, 'asset', side_effect=LookupError('selection captured')) as asset:
+            with self.assertRaises(LookupError): self.a.latest('admin')
+        self.assertEqual(asset.call_args.args[0], new)
+        self.assertIn('page=2', get.call_args_list[1].args[0])
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name)

@@ -103,6 +103,11 @@ def verify_loaded_identity(image, manifest, archive):
             return
     raise PermanentError('Loaded OCI manifest is absent from archive')
 
+def mounts_equal(before, after):
+    # Docker may enumerate the same mounts in a different order after recreate.
+    # Compare every field; only array ordering has no storage meaning.
+    return sorted(before, key=lambda row: json.dumps(row, sort_keys=True)) == sorted(after, key=lambda row: json.dumps(row, sort_keys=True))
+
 class Agent:
     def __init__(self, directory):
         self.root = Path(directory).resolve()
@@ -277,9 +282,10 @@ class Agent:
                 if service != component and after[name]['Id'] != before[name]['Id']:
                     raise DeployError('A non-target container changed unexpectedly')
             api_name=self.config['containers']['api']
-            if before[api_name]['Mounts'] != after[api_name]['Mounts']: raise DeployError('CV storage mounts changed')
+            if not mounts_equal(before[api_name]['Mounts'], after[api_name]['Mounts']): raise DeployError('CV storage mounts changed')
             if after[self.config['containers'][component]]['Image'] != expected_image_id: raise DeployError('Running image does not match candidate')
-        except Exception:
+        except Exception as failure:
+            self.event(component, 'verification_failed', reason=str(failure) if isinstance(failure, DeployError) else type(failure).__name__)
             try:
                 command(self.compose(previous_file,'up','-d','--no-deps','--no-build','--pull','never','--wait','--wait-timeout','180',component))
                 self.healthy(component)

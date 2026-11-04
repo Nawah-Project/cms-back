@@ -187,6 +187,16 @@ class Agent:
 
     def load(self, component, data, archive):
         m = data[1]
+        try:
+            image = json.loads(command(['docker','image','inspect',m['imageRef']]))[0]
+        except DeployError:
+            image = None
+        if image is not None:
+            verify_loaded_identity(image,m,archive)
+            if image['Config'].get('Labels',{}).get('org.opencontainers.image.revision') != m['commit']:
+                raise PermanentError('Cached image revision mismatch')
+            self.event(component,'image_reused',tag=m['tag'],imageId=image['Id'])
+            return image['Id']
         command(['docker','image','load','--input',str(archive)])
         image = json.loads(command(['docker','image','inspect',m['imageRef']]))[0]
         verify_loaded_identity(image,m,archive)
@@ -319,7 +329,14 @@ class Agent:
             data=self.latest(name,tag)
             if not data: self.event(name,'no_approved_release');continue
             m=data[1]
-            if mode=='poll' and self.state['components'][name].get('tag')==m['tag']: continue
+            current=self.state['components'][name]
+            if mode=='poll' and current.get('tag')==m['tag']: continue
+            if mode=='apply' and current.get('tag')==m['tag'] and current.get('configId',current.get('imageId'))==m['imageId']:
+                running=self.inventory()[self.config['containers'][name]]
+                if running['Image']==current.get('imageId') and running['Config']['Image']==m['imageRef']:
+                    self.healthy(name)
+                    self.event(name,'already_current',tag=m['tag'])
+                    continue
             if mode=='poll' and self.state.get('failed',{}).get(name)==m['tag'] and not retry: continue
             try:
                 if mode=='check':self.event(name,'candidate_available',tag=m['tag']);continue

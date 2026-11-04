@@ -17,3 +17,17 @@ uploads
 .vscode
 *.swp
 *.swo
+
+# Control-plane files do not ship in application images.
+.github
+docs
+ops
+AGENTS.md
+scripts/ci
+scripts/release
+scripts/deployment
+scripts/backup
+test
+tests
+scripts/*checks.mjs
+**/*.spec.ts

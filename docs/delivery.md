@@ -2,13 +2,14 @@
 
 | Change | Verification | Production image |
 |---|---|---|
-| Documentation only | Plan and completion gate | None |
+| Documentation only | Path classification | None |
 | Operator/deployer/release helpers | Targeted operator tests | None |
 | Tests only | Source checks and compilation | None |
 | Application source/dependencies/schema | Source tests, candidate image, runtime smoke | Changed application(s), on main |
 | Owned Nawah admin pages only | Common frontend checks once | Admin only |
 | Shared/unknown frontend files | Common checks once | Member and admin |
 
+Operator-only checks run inside the planning job to avoid paying for extra short jobs.
 The planner considers deleted/renamed files and falls back to all components if
 it cannot establish a diff. PRs compile/test without exporting unused image
 archives. A manual full build remains available. Production approval promotes the

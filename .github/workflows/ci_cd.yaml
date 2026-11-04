@@ -4,7 +4,7 @@ permissions:
 jobs:
   plan:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 12
     outputs:
       code: ${{ steps.plan.outputs.code }}
       ops: ${{ steps.plan.outputs.ops }}
@@ -20,20 +20,17 @@ jobs:
     - name: Plan only the required work
       id: plan
       run: python3 scripts/ci/plan.py --profile nawah-back
-  ops:
-    needs: plan
-    if: needs.plan.outputs.ops == 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 8
-    steps:
-    - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
     - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
       with:
         node-version: 24.22.2
+      if: steps.plan.outputs.ops == 'true'
     - run: python3 -m unittest discover -s scripts/deployment -p 'test_*.py' -v
+      if: steps.plan.outputs.ops == 'true'
     - name: Provide the PostgreSQL image needed by isolated backup tests
       run: docker pull postgres:17-alpine
+      if: steps.plan.outputs.ops == 'true'
     - run: python3 scripts/backup/test_backup.py
+      if: steps.plan.outputs.ops == 'true'
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 35
@@ -132,8 +129,7 @@ jobs:
       run: docker rm -f ci-runtime || true
     needs:
     - plan
-    - ops
-    if: always() && needs.plan.outputs.code == 'true' && (needs.ops.result == 'success' || needs.ops.result == 'skipped')
+    if: needs.plan.outputs.code == 'true'
     permissions:
       contents: read
     concurrency:
@@ -159,27 +155,6 @@ jobs:
       env:
         GH_TOKEN: ${{ github.token }}
       run: python3 scripts/deployment/release.py publish
-  ci-gate:
-    needs:
-    - plan
-    - ops
-    - verify
-    - publish
-    if: always()
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    steps:
-    - name: Require every selected stage to pass
-      env:
-        CI_NEEDS: ${{ toJSON(needs) }}
-      run: |-
-        python3 - <<'PY'
-        import json,os
-        r=json.loads(os.environ['CI_NEEDS'])
-        assert r['plan']['result']=='success', 'Delivery planning failed'
-        assert all(v['result'] in ['success','skipped'] for v in r.values()), 'A required stage failed or was cancelled'
-        print('Selected delivery checks passed; skipped stages were not needed.')
-        PY
 'on':
   push:
     branches:

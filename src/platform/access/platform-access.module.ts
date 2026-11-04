@@ -1,3 +1,4 @@
+import { VerifiedEmailGuard } from './verified-email.guard';
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../../auth/auth.module';
 import { SessionGuard } from './session.guard';
@@ -9,7 +10,7 @@ import { AdministratorGuard } from './administrator.guard';
 // never AuthService, AdminService, or programme eligibility services.
 @Module({
   imports: [AuthModule],
-  providers: [SessionGuard, AdministratorGuard, LegacySessionAdapter, { provide: SessionAuthenticator, useExisting: LegacySessionAdapter }],
-  exports: [SessionGuard, AdministratorGuard, SessionAuthenticator],
+  providers: [VerifiedEmailGuard,SessionGuard, AdministratorGuard, LegacySessionAdapter, { provide: SessionAuthenticator, useExisting: LegacySessionAdapter }],
+  exports: [VerifiedEmailGuard,SessionGuard, AdministratorGuard, SessionAuthenticator],
 })
 export class PlatformAccessModule {}

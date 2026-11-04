@@ -27,3 +27,13 @@ for(const file of walk(root).filter(f=>f.endsWith('.ts')&&!f.endsWith('.spec.ts'
  }else if(relative!=='app.module.ts'){assert.ok(!/from\s+['"][^'"]*strategic-relationships\//.test(source),relative);assert.ok(!/\.strategicRelationships(?:Workspace|Mutation)\./.test(source),relative);}
 }
 console.log('Strategic relationships data ownership and replaceable module boundary verified.');
+
+for(const file of walk(root).filter(f=>f.endsWith('.ts')&&!f.endsWith('.spec.ts'))){
+ const relative=path.relative(root,file),source=fs.readFileSync(file,'utf8');
+ if(relative.startsWith('learning-library/')){
+  for(const m of source.matchAll(/from\s+['"]([^'"]+)['"]/g)){if(!m[1].startsWith('.'))continue;const target=path.relative(root,path.resolve(path.dirname(file),m[1]));assert.ok(target.startsWith('learning-library/')||target.startsWith('platform/access/')||(relative.includes('/infrastructure/')&&target==='prisma/prisma.service'),`Forbidden learning dependency: ${relative} -> ${target}`);}
+  if(relative.includes('/domain/'))assert.ok(!/PrismaService|@nestjs|fetch\s*\(/.test(source),relative);
+  if(!relative.includes('/infrastructure/'))assert.ok(!/PrismaService|\$transaction|\.user\.(find|update)/.test(source),relative);
+ }else if(relative!=='app.module.ts'){assert.ok(!/from\s+['"][^'"]*learning-library\//.test(source),relative);assert.ok(!/\.learning(?:Library|Book|Edition|Note|Map|Goal|Reading|Position|Asset|Mutation)\./.test(source),relative);}
+}
+console.log('Learning library resource ownership and replaceable module boundary verified.');

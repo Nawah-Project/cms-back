@@ -40,6 +40,8 @@ services:
       REFRESH_TOKEN_TTL_SECONDS: ${REFRESH_TOKEN_TTL_SECONDS:-1209600}
       TRUST_PROXY: ${TRUST_PROXY:-1}
       CV_STORAGE_DIR: /app/private-storage/cvs
+      LEARNING_STORAGE_DIR: /app/private-storage/learning
+      LEARNING_INBOX_DIR: /app/private-storage/learning-inbox
       CV_MAX_FILE_SIZE_BYTES: ${CV_MAX_FILE_SIZE_BYTES:-5242880}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
@@ -57,6 +59,8 @@ services:
       - "${BACKEND_HOST_PORT:-3000}:3000"
     volumes:
       - cv-storage:/app/private-storage/cvs
+      - learning-storage:/app/private-storage/learning
+      - learning-inbox:/app/private-storage/learning-inbox
     depends_on:
       postgres:
         condition: service_healthy
@@ -111,6 +115,8 @@ services:
 volumes:
   cms-postgres-data:
   cv-storage:
+  learning-storage:
+  learning-inbox:
 
 networks:
   nawah:

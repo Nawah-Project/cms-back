@@ -46,10 +46,10 @@ class BackupRecoveryIntegration(unittest.TestCase):
                                  'volumes': ['db:/var/lib/postgresql/data']},
                     'api': {'image': IMAGE, 'labels': labels,
                             'entrypoint': ['sh', '-c', 'sleep infinity'],
-                            'environment': {'CV_STORAGE_DIR': '/recovery/cvs'},
-                            'volumes': ['cvs:/recovery/cvs']},
+                            'environment': {'CV_STORAGE_DIR': '/recovery/cvs','LEARNING_STORAGE_DIR':'/recovery/learning','LEARNING_INBOX_DIR':'/recovery/learning-inbox'},
+                            'volumes': ['cvs:/recovery/cvs','learning:/recovery/learning','inbox:/recovery/learning-inbox']},
                 },
-                'volumes': {'db': {}, 'cvs': {}},
+                'volumes': {'db': {}, 'cvs': {},'learning':{},'inbox':{}},
                 'networks': {'default': {'internal': True}},
             }
             path = cls.root / (project + '.json')
@@ -110,6 +110,14 @@ INSERT INTO journey_nodes VALUES ('W1_M1', 11);''')
         cls.payloads.append(payload)
         cls.write_cv(cls.source, key, payload)
         cls.before = cls.snapshot(cls.source)
+        cls.learning_key = str(uuid.uuid4()) + '/' + str(uuid.uuid4()) + '.pdf'
+        cls.learning_payload = b'%PDF-1.7\nSynthetic learning backup\n'
+        cls.sql(cls.source, 'CREATE TABLE learning_asset (id text, "ownerId" text, bytes bigint, "offset" bigint, fingerprint text, status text);')
+        owner, asset = cls.learning_key.split('/')
+        cls.sql(cls.source, f"INSERT INTO learning_asset VALUES ('{asset[:-4]}','{owner}',{len(cls.learning_payload)},{len(cls.learning_payload)},'{hashlib.sha256(cls.learning_payload).hexdigest()}','READY');")
+        mounts=json.loads(command(['docker','inspect',cls.cid(cls.source,'api')]))[0]['Mounts']
+        mount=next(m for m in mounts if m['Destination']=='/recovery/learning')
+        command(['docker','run','--rm','-i','--network','none','--mount','type=volume,src='+mount['Name']+',dst=/books','--entrypoint','sh',IMAGE,'-ceu','mkdir -p "$(dirname "/books/$1")"; cat >"/books/$1"; chmod 600 "/books/$1"','--',cls.learning_key],cls.learning_payload)
         result = cls.cli('backup', *cls.options(cls.source), '--output-dir', str(cls.root / 'backups'), '--confirm-quiesced')
         if result.returncode:
             raise RuntimeError(result.stderr.decode())
@@ -176,6 +184,7 @@ INSERT INTO journey_nodes VALUES ('W1_M1', 11);''')
         for name in ('database.dump', 'cv-files.tar', 'manifest.json', 'COMPLETE'):
             self.assertEqual((self.backup / name).stat().st_mode & 0o777, 0o600)
         manifest = json.loads((self.backup / 'manifest.json').read_text())
+        self.assertEqual(manifest['extra_files']['learning'][self.learning_key]['sha256'],hashlib.sha256(self.learning_payload).hexdigest())
         for key, payload in zip(self.keys, self.payloads):
             self.assertEqual(manifest['cv_files'][key]['sha256'], hashlib.sha256(payload).hexdigest())
 

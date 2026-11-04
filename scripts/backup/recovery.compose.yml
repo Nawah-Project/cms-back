@@ -21,13 +21,19 @@ services:
     entrypoint: ["sh", "-c", "sleep infinity"]
     environment:
       CV_STORAGE_DIR: /recovery/cvs
+      LEARNING_STORAGE_DIR: /recovery/learning
+      LEARNING_INBOX_DIR: /recovery/learning-inbox
     volumes:
       - recovery-cvs:/recovery/cvs
+      - recovery-learning:/recovery/learning
+      - recovery-learning-inbox:/recovery/learning-inbox
     networks: [recovery]
 
 volumes:
   recovery-db:
   recovery-cvs:
+  recovery-learning:
+  recovery-learning-inbox:
 
 networks:
   recovery:

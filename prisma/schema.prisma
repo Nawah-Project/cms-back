@@ -1186,3 +1186,104 @@ model StrategicRelationshipsMutation {
   @@unique([workspaceId, requestId])
   @@map("strategic_relationship_mutations")
 }
+
+model LearningLibrary {
+  id        String   @id @default(uuid())
+  ownerId   String   @unique
+  revision  Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@map("learning_library")
+}
+
+model LearningBook {
+  ownerId String
+  id      String
+  data    Json
+
+  @@id([ownerId, id])
+  @@map("learning_book")
+}
+
+model LearningEdition {
+  ownerId     String
+  id          String
+  fingerprint String
+  data        Json
+
+  @@id([ownerId, id])
+  @@unique([ownerId, fingerprint])
+  @@map("learning_edition")
+}
+
+model LearningNote {
+  ownerId String
+  id      String
+  data    Json
+
+  @@id([ownerId, id])
+  @@map("learning_note")
+}
+
+model LearningMap {
+  ownerId String
+  id      String
+  data    Json
+
+  @@id([ownerId, id])
+  @@map("learning_map")
+}
+
+model LearningGoal {
+  ownerId String
+  id      String
+  data    Json
+
+  @@id([ownerId, id])
+  @@map("learning_goal")
+}
+
+model LearningReading {
+  ownerId String
+  id      String
+  data    Json
+
+  @@id([ownerId, id])
+  @@map("learning_reading")
+}
+
+model LearningPosition {
+  ownerId String
+  id      String
+  data    Json
+
+  @@id([ownerId, id])
+  @@map("learning_position")
+}
+
+model LearningMutation {
+  ownerId   String
+  id        String
+  hash      String
+  revision  Int
+  createdAt DateTime @default(now())
+
+  @@id([ownerId, id])
+  @@map("learning_mutation")
+}
+
+model LearningAsset {
+  id          String   @id @default(uuid())
+  ownerId     String
+  editionId   String
+  bytes       BigInt
+  fingerprint String
+  offset      BigInt   @default(0)
+  status      String   @default("UPLOADING")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([ownerId, editionId])
+  @@index([ownerId, status])
+  @@map("learning_asset")
+}

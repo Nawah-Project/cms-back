@@ -26,6 +26,7 @@ async function bootstrap() {
       .split(',')
       .map((value) => value.trim()),
     credentials: true,
+    exposedHeaders: ['Accept-Ranges','Content-Range','Content-Length'],
   });
   app.use(cookieParser());
   app.useGlobalPipes(

@@ -97,6 +97,19 @@ class Stack:
         if any(m != cv_mounts[0] for m in cv_mounts):
             raise BackupError('API replicas do not share a single CV storage location')
         self.cv_mount = cv_mounts[0]
+        self.extra_mounts = {}
+        for name, variable in [('learning', 'LEARNING_STORAGE_DIR'), ('learning-inbox', 'LEARNING_INBOX_DIR')]:
+            directories = [environment(c).get(variable) for c in self.apis]
+            if not any(directories):
+                continue
+            if not all(directories):
+                raise BackupError('Private library storage must be configured on all replicas')
+            mounts = [mount_for(c, d) for c, d in zip(self.apis, directories)]
+            if any(m != mounts[0] for m in mounts):
+                raise BackupError('Private library replicas do not share storage')
+            if mounts[0]['host_source'] == self.cv_mount['host_source']:
+                raise BackupError('Library storage must be independent from CV storage')
+            self.extra_mounts[name] = mounts[0]
         pg_directory = environment(self.pg).get('PGDATA')
         if not pg_directory:
             raise BackupError('PGDATA must be configured on the PostgreSQL container')
@@ -127,21 +140,22 @@ class Stack:
         return run(['docker', 'exec', '-i', self.pg['Id'], 'sh', '-ceu', command],
                    data=query.encode(), operation='PostgreSQL inventory query').decode().strip()
 
-    def helper(self, image, command, *, readonly=True, backup=None, output=None):
+    def helper(self, image, command, *, readonly=True, backup=None, output=None, storage="cv"):
+        mount = self.cv_mount if storage == "cv" else self.extra_mounts[storage]
         args = ['docker', 'run', '--rm', '--pull', 'never', '--network', 'none',
                 '--read-only', '--security-opt', 'no-new-privileges',
-                '--mount', mount_arg(self.cv_mount, '/cv', readonly)]
+                '--mount', mount_arg(mount, '/cv', readonly)]
         if backup:
             args += ['--mount', f'type=bind,src={backup.resolve()},dst=/backup,readonly']
         return run(args + ['--entrypoint', 'sh', image, '-ceu', command, '--',
-                           '/cv/' + self.cv_mount['relative']], output=output)
+                           '/cv/' + mount['relative']], output=output)
 
     def identity(self):
         identity = json.loads(self.sql("SELECT json_build_object('database',current_database(),"
                                        "'cluster',(SELECT system_identifier::text FROM pg_control_system()));"))
         return {**identity, 'project': self.project, 'engine': self.engine,
                 'pg_container': self.pg['Id'], 'pg_mount': self.pg_mount,
-                'cv_mount': self.cv_mount, 'helper_image': self.pg['Config']['Image']}
+                'cv_mount': self.cv_mount, 'extra_mounts': self.extra_mounts, 'helper_image': self.pg['Config']['Image']}
 
 
 def inventory(stack):
@@ -170,7 +184,10 @@ def inventory(stack):
             relationships[table] = int(stack.sql(f'SELECT count(*) FROM "{table}" t JOIN users u ON u.id=t."userId";'))
     if 'career_consulting_files' in counts:
         relationships['career_consulting_files'] = int(stack.sql('SELECT count(*) FROM career_consulting_files f JOIN career_consulting_cases c ON c.id=f.\"caseId\" JOIN users u ON u.id=c.\"userId\";'))
-    return {'table_counts': counts, 'cv_references': references, 'user_relationship_counts': relationships}
+    result = {'table_counts': counts, 'cv_references': references, 'user_relationship_counts': relationships}
+    if 'learning_asset' in counts:
+        result['learning_references'] = json.loads(stack.sql("SELECT coalesce(json_agg(json_build_object('id',id,'ownerId',\"ownerId\",'bytes',bytes,'offset',\"offset\",'fingerprint',fingerprint,'status',status)),'[]') FROM learning_asset;"))
+    return result
 
 
 def archive_inventory(path):
@@ -199,6 +216,22 @@ def check_references(metadata, files):
             raise BackupError('A database-referenced CV file is missing or has the wrong size')
 
 
+def check_learning_references(manifest):
+    files = manifest.get('extra_files', {}).get('learning', {})
+    for row in manifest['database'].get('learning_references', []):
+        if not re.fullmatch(r'[0-9a-fA-F-]{36}', row['ownerId']) or not re.fullmatch(r'[0-9a-fA-F-]{36}', row['id']):
+            raise BackupError('Invalid learning asset identity')
+        ready = row['status'] == 'READY'
+        key = row['ownerId'] + '/' + row['id'] + ('.pdf' if ready else '.part')
+        entry = files.get(key)
+        if (ready or row['offset'] > 0) and not entry:
+            raise BackupError('Referenced learning file is missing')
+        if ready and (entry['size'] != row['bytes'] or entry['sha256'] != row['fingerprint']):
+            raise BackupError('Learning asset metadata and file disagree')
+        if not ready and entry and entry['size'] < row['offset']:
+            raise BackupError('Learning upload progress exceeds backed-up bytes')
+
+
 def verify(directory, image=None, *, complete=True):
     if complete and not (directory / 'COMPLETE').is_file():
         raise BackupError('Backup is incomplete (no COMPLETE marker)')
@@ -213,6 +246,13 @@ def verify(directory, image=None, *, complete=True):
     if files != manifest['cv_files']:
         raise BackupError('CV file inventory/checksum mismatch')
     check_references(manifest['database'], files)
+    for name, expected in manifest.get('extra_files', {}).items():
+        if name not in ('learning', 'learning-inbox'):
+            raise BackupError('Unknown private library archive')
+        path = directory / (name + '-files.tar')
+        if not path.is_file() or path.is_symlink() or digest(path) != manifest['sha256'].get(path.name) or archive_inventory(path) != expected:
+            raise BackupError('Private library file checksum mismatch')
+    check_learning_references(manifest)
     helper_image = image or manifest['source']['helper_image']
     run(['docker', 'run', '--rm', '--pull', 'never', '--network', 'none', '--read-only',
          '--security-opt', 'no-new-privileges', '--mount',
@@ -246,6 +286,13 @@ def backup(args):
         stack.helper(source['helper_image'], 'tar -cf - -C "$1" .', output=stream)
         stream.flush()
         os.fsync(stream.fileno())
+    extra_files = {}
+    for name in stack.extra_mounts:
+        with (pending / (name + '-files.tar')).open('xb') as stream:
+            stack.helper(source['helper_image'], 'tar -cf - -C "$1" .', output=stream, storage=name)
+            stream.flush()
+            os.fsync(stream.fileno())
+        extra_files[name] = archive_inventory(pending / (name + '-files.tar'))
     stack.assert_quiesced()
     if inventory(stack) != before:
         raise BackupError('Database inventory changed during backup; backup remains incomplete')
@@ -253,6 +300,11 @@ def backup(args):
                 'consistency': 'all-writers-stopped', 'source': source, 'database': before,
                 'sha256': {name: digest(pending / name) for name in ('database.dump', 'cv-files.tar')},
                 'cv_files': archive_inventory(pending / 'cv-files.tar')}
+    if extra_files:
+        manifest['extra_files'] = extra_files
+        for name in extra_files:
+            manifest['sha256'][name + '-files.tar'] = digest(pending / (name + '-files.tar'))
+    check_learning_references(manifest)
     check_references(before, manifest['cv_files'])
     write_private(pending / 'manifest.json', json.dumps(manifest, indent=2, sort_keys=True) + '\n')
     verify(pending, complete=False)
@@ -283,8 +335,8 @@ def restore(args):
         for key in ('pg_mount', 'cv_mount'):
             if (target[key]['type'], target[key]['source']) == (source[key]['type'], source[key]['source']):
                 raise BackupError('Recovery storage overlaps source storage')
-        for target_mount in (target['pg_mount'], target['cv_mount']):
-            for source_mount in (source['pg_mount'], source['cv_mount']):
+        for target_mount in (target['pg_mount'], target['cv_mount'], *target.get('extra_mounts',{}).values()):
+            for source_mount in (source['pg_mount'], source['cv_mount'], *source.get('extra_mounts',{}).values()):
                 target_path = PurePosixPath(target_mount['host_source'])
                 source_path = PurePosixPath(source_mount['host_source'])
                 if target_path == source_path or target_path in source_path.parents or source_path in target_path.parents:
@@ -309,6 +361,10 @@ def restore(args):
         stack.helper(image, 'test -d "$1" && test -z "$(ls -A "$1")"')
     except BackupError as error:
         raise BackupError('Recovery CV directory must exist and be empty') from error
+    for name in manifest.get('extra_files', {}):
+        if name not in stack.extra_mounts:
+            raise BackupError('Recovery private library mount is missing')
+        stack.helper(image, 'test -d "$1" && test -z "$(ls -A "$1")"', storage=name)
     command = ('export PGPASSWORD="${POSTGRES_PASSWORD:-}"; exec pg_restore --exit-on-error '
                '--single-transaction --no-owner --no-acl '
                '--username "${POSTGRES_USER:?}" --dbname "${POSTGRES_DB:?}"')
@@ -318,6 +374,14 @@ def restore(args):
     if result.returncode:
         raise BackupError(f'pg_restore failed (exit {result.returncode}); recovery is not approved')
     stack.helper(image, 'tar -xf /backup/cv-files.tar -C "$1"', readonly=False, backup=directory)
+    for name in manifest.get('extra_files', {}):
+        stack.helper(image, 'tar -xf /backup/' + name + '-files.tar -C "$1"', readonly=False, backup=directory, storage=name)
+        with tempfile.TemporaryDirectory(prefix='nawah-learning-recovery-') as temp:
+            check = Path(temp) / 'files.tar'
+            with check.open('xb') as stream:
+                stack.helper(image, 'tar -cf - -C "$1" .', storage=name, output=stream)
+            if archive_inventory(check) != manifest['extra_files'][name]:
+                raise BackupError('Restored learning files differ')
     if inventory(stack) != manifest['database']:
         raise BackupError('Restored database counts, relationships or CV references do not match')
     with tempfile.TemporaryDirectory(prefix='nawah-recovery-verify-') as temp:

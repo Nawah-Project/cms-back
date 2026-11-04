@@ -146,3 +146,18 @@ Journey integration tests are separate: see `test/jest-phase1.json`. They requir
 Removing startup cleanup prevents future loss; it cannot reconstruct deleted records or restore overwritten administrator configuration. Do not infer corruption from ordinary Arabic/English words, do not renumber CV versions by `count(history)`, and do not automatically reset existing nodes to seed defaults. Recovery from an older backup or any historical repair needs explicit record-level evidence, a verified backup, an isolated rehearsal, and separate operator approval. No historical repair is run by these scripts.
 
 Career Consulting documents use the same private volume under `career-consulting/<uuid>.pdf`. Capture this subdirectory with the volume, retain private file permissions, and use the updated inventory so references from `career_consulting_files` are validated. The regression restore includes this namespace. Never point the old flat CV cleaner at this directory.
+
+## Private learning-library files
+
+When `LEARNING_STORAGE_DIR` / `LEARNING_INBOX_DIR` are configured on the API,
+backup discovers their independent persistent mounts. It adds `learning-files.tar`
+and `learning-inbox-files.tar` with per-file hashes to the same stopped-writer set.
+READY `learning_asset` rows must match owner/id paths, size and SHA-256; resumable
+uploads retain their `.part` data and accepted offsets. A missing READY file, unsafe
+link, incomplete storage configuration, or checksum mismatch fails backup.
+
+The recovery template includes new, empty mounts for these archives. Restore checks
+that they do not overlap any source mount, keeps recovered API stopped, and verifies
+all restored library hashes. Older backup sets without these optional archives
+remain supported. No retention/pruning or CV-cleanup policy is shared with library
+storage. Transfer inboxes are private; symlinks and special files are not backed up.

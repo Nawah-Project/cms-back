@@ -24,7 +24,7 @@ COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_m
 COPY --from=production-dependencies --chown=node:node /app/package.json ./package.json
 COPY --from=production-dependencies --chown=node:node /app/prisma ./prisma
 COPY --from=build --chown=node:node /app/dist ./dist
-RUN mkdir -p /app/private-storage/cvs && chown -R node:node /app/private-storage
+RUN mkdir -p /app/private-storage/cvs /app/private-storage/learning /app/private-storage/learning-inbox && chown -R node:node /app/private-storage
 USER node
 EXPOSE 3000
 CMD ["sh", "-c", "npm run prisma:migrate:deploy && exec node dist/main.js"]

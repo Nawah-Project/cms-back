@@ -1,6 +1,3 @@
-import { LearningLibraryModule } from './learning-library/learning-library.module';
-import { StrategicRelationshipsModule } from './strategic-relationships/strategic-relationships.module';
-import { FounderWorkspaceModule } from './founder-workspace/founder-workspace.module';
 import { CareerConsultingModule } from './career-consulting/consulting.module';
 import { OperationsModule } from './operations/operations.module';
 import { UxLabModule } from './ux-lab/ux-lab.module';
@@ -27,9 +24,6 @@ import { MarketingModule } from './marketing/marketing.module';
 
 @Module({
   imports: [
-    ...(process.env.LEARNING_LIBRARY_ENABLED === 'false' ? [] : [LearningLibraryModule]),
-    ...(process.env.STRATEGIC_RELATIONSHIPS_ENABLED === 'false' ? [] : [StrategicRelationshipsModule]),
-    ...(process.env.FOUNDER_WORKSPACE_ENABLED === 'false' ? [] : [FounderWorkspaceModule]),
     CareerConsultingModule,
     OperationsModule,
     ExperienceModule,

@@ -13,7 +13,7 @@ def main():
   if args.run:
    value=subprocess.run([gh,'run','view',str(args.run),'--repo',args.repo,'--json','status,conclusion,headSha,jobs,url'],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
    if value.returncode:raise RuntimeError('GitHub observation failed; existing build/deployment was not restarted')
-   r=json.loads(value.stdout);result['ci']={k:r[k] for k in ['status','conclusion','headSha','url']};result['ci']['activeSteps']=[s['name']for j in r['jobs']for s in j.get('steps',[])if s['status']=='in_progress'];done=r['status']=='completed';failed=done and r['conclusion']!='success'
+   r=json.loads(value.stdout);result['ci']={k:r[k] for k in ['status','conclusion','headSha','url']};result['ci']['activeSteps']=[s['name']for j in r['jobs']for s in j.get('steps',[])if s['status']=='in_progress'];result['ci']['failedSteps']=[{'job':j['name'],'step':s['name']}for j in r['jobs']for s in j.get('steps',[])if s.get('conclusion')=='failure'];done=r['status']=='completed';failed=done and r['conclusion']!='success'
   if args.deployment_dir:
    state=json.loads((args.deployment_dir/'state.json').read_text());component=state.get('components',{}).get(args.component,{})
    complete=component.get('tag')==args.tag and not state.get('pending');bad=state.get('failed',{}).get(args.component)==args.tag
